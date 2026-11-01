@@ -331,7 +331,19 @@
     if (!evening) return 'out'
     return lit === day ? 'keep' : 'light'
   }
-  T.companionRules = { seek: SEEK, gitMoment, isReadable, lanternPhase, defaultWords: DEFAULT_WORDS, openTab, frontTab, goToTab }
+  // Missing pieces in someone's pet (a word naming an act that is not there, an --asset-* sound that is
+  // not in the folder): `resolve` falls back to 'idle', and `once` says so the first time only, so a typo
+  // shows up once in the console instead of on every keystroke.
+  const missing = {
+    resolve: (name, has) => (typeof name === 'string' && name && has(name) ? name : 'idle'),
+    once: (seen = new Set()) => (kind, name) => {
+      const key = `${kind}:${name}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    }
+  }
+  T.companionRules = { seek: SEEK, gitMoment, isReadable, lanternPhase, defaultWords: DEFAULT_WORDS, openTab, frontTab, goToTab, missing }
 
   // ---------- settings: the catalog the settings panel is drawn from, and the pure helpers ----------
   // Each pet's settings are one object, saved by the launcher as settings.json "companions"[<pet id>]
@@ -1329,12 +1341,25 @@
       },
       ...cfg.reactions
     }
+    // A name that is neither a reaction nor an act (a typo in `words`, an act left out of a pet someone
+    // shared) does not leave it frozen mid-pose: it warns once per name and does an ordinary idle act.
+    const firstMiss = missing.once()
+    const warnMissing = (kind, name) => firstMiss(kind, name) && console.warn(`[companion ${id}] ${kind} "${name}" not found; ${kind === 'act' ? 'idling instead' : 'going on without it'}`)
+    const playable = (n) => Boolean(reactions[n] ?? acts[n])
     const play = (name) => {
-      const fn = reactions[name] ?? acts[name]
-      if (!fn) return false
+      if (missing.resolve(name, playable) === 'idle') {
+        warnMissing('act', String(name))
+        if (mode === 'home' && !drag && !stopped) {
+          busy?.cancel()
+          busy = null
+          lastAct = pickAct()
+          acts[lastAct]?.()
+        }
+        return false
+      }
       busy?.cancel()
       busy = null // a cancelled action clears itself only on the next tick
-      fn(api)
+      ;(reactions[name] ?? acts[name])(api)
       return true
     }
 
@@ -2170,7 +2195,10 @@
     const playAudio = async (src, { start = 0, length = 0, volume = 0.35, fadeIn = 800, fadeOut = 1500 } = {}) => {
       if (!S || !src || playing || stopped || document.hidden || !canSound()) return false
       const url = /^[a-z][a-z0-9+.-]*:/i.test(src) ? src : asset(src)
-      if (!url || (await soundMuted())) return false
+      // No such file in the assets folder: say so once, and the caller carries on without sound (sing
+      // falls back to its silent hum, an act just keeps moving).
+      if (!url) return warnMissing('sound', `--asset-${src}`), false
+      if (await soundMuted()) return false
       if (playing || stopped || document.hidden) return false
       const audio = new Audio(url)
       audio.volume = 0
@@ -2179,7 +2207,7 @@
       try {
         await new Promise((ok, fail) => {
           audio.addEventListener('loadedmetadata', ok, { once: true })
-          audio.addEventListener('error', fail, { once: true })
+          audio.addEventListener('error', () => (warnMissing('sound', src), fail()), { once: true })
         })
         audio.currentTime = Math.max(0, Number(start) || 0)
         await audio.play()

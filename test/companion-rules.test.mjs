@@ -11,7 +11,7 @@ const REPO = path.resolve(import.meta.dirname, '..')
 const ctx = { window: { __orcaThemer: { registerTouch() {} } } }
 vm.createContext(ctx)
 vm.runInContext(fs.readFileSync(path.join(REPO, 'src', 'touches', 'companion.js'), 'utf8'), ctx)
-const { seek, gitMoment, isReadable, lanternPhase, defaultWords } = ctx.window.__orcaThemer.companionRules
+const { seek, gitMoment, isReadable, lanternPhase, defaultWords, missing } = ctx.window.__orcaThemer.companionRules
 const { spots, pick, OUT, ROT } = seek
 
 // A small repeatable random (mulberry32).
@@ -146,4 +146,20 @@ test('words: the built-in list sings on a word, treats "沒有 bug" as good news
   assert.equal(match('good night'), 'sleepy')
   assert.equal(match('為什麼會這樣'), 'curious')
   assert.equal(match('ls -la'), null)
+})
+
+test('missing: a word naming an act the pet does not have falls back to idle, and warns once per name', () => {
+  // A shared pet with its 'dance' act taken out; its words still ask for it.
+  const acts = { wiggle: 1, hop: 1, sing: 1 }
+  const has = (n) => n in acts
+  assert.equal(missing.resolve('hop', has), 'hop')
+  assert.equal(missing.resolve('dance', has), 'idle')
+  for (const bad of ['', null, undefined, 42]) assert.equal(missing.resolve(bad, has), 'idle', String(bad))
+  const first = missing.once()
+  const warned = ['dance', 'dance', 'dance'].filter((n) => missing.resolve(n, has) === 'idle' && first('act', n))
+  assert.equal(warned.length, 1)
+  assert.equal(first('act', 'spin'), true) // another missing act still gets its own warning
+  assert.equal(first('sound', '--asset-lullaby'), true) // a missing sound is counted apart
+  assert.equal(first('sound', '--asset-lullaby'), false)
+  assert.equal(missing.once()('act', 'dance'), true) // each pet keeps its own list
 })
