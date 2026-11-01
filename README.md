@@ -118,6 +118,7 @@ agent 會先問你幾件事：參考圖、配色、角色個性、招牌動作�
 | [docs/performance.md](docs/performance.md) | **效能守則**，每一條都是實際量到的延遲 |
 | [docs/install.md](docs/install.md) | 安裝、開機啟動、撐過 Orca 更新的原理、疑難排解 |
 | [docs/fixes.md](docs/fixes.md) | 選用的執行期修正（預設關閉） |
+| [docs/debug-theme-overwritten.md](docs/debug-theme-overwritten.md) | 主題被蓋掉或消失時，用 DevTools 中斷點、`$0` 和 `getComputedStyle` 找原因 |
 
 ## 指令
 
