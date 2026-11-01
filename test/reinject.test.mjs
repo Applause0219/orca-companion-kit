@@ -64,7 +64,7 @@ function all(node, out = []) {
 }
 
 /** A fresh document, as after a reload or in a newly opened window. */
-function freshWindow() {
+function freshWindow(media = { matches: false, addEventListener() {} }) {
   const html = element('html')
   const head = html.appendChild(element('head'))
   const body = html.appendChild(element('body'))
@@ -84,7 +84,7 @@ function freshWindow() {
     document,
     location: { href: 'file:///orca/out/renderer/index.html' },
     navigator: { platform: 'Win32' },
-    matchMedia: () => ({ matches: false, addEventListener() {} }),
+    matchMedia: () => media,
     MutationObserver: class {
       observe() {}
       disconnect() {}
@@ -169,6 +169,50 @@ test('reinject: a reload or a new window starts clean and gets the runtime and t
     assert.equal(next.themeStyles().length, 1)
     assert.deepEqual(next.sent.map((m) => m.type), ['hello'])
   }
+})
+
+// prefers-reduced-motion: the pet (and every other touch) is never started while the system asks for
+// less motion, and one already running is stopped as soon as the setting flips; it comes back when it
+// flips off. This is the whole reduced-motion story for companion.js, so its looping motion needs no
+// media query of its own.
+function reducedMotionWindow(reduce) {
+  const media = {
+    matches: reduce,
+    listeners: [],
+    addEventListener(type, fn) {
+      if (type === 'change') this.listeners.push(fn)
+    },
+    flip(next) {
+      this.matches = next
+      for (const fn of this.listeners) fn({ matches: next })
+    }
+  }
+  const w = freshWindow(media)
+  w.inject()
+  const log = []
+  w.win.__orcaThemer.registerTouch('companion', {
+    start() {
+      log.push('start')
+      return () => log.push('stop')
+    }
+  })
+  w.win.__orcaThemer.apply({ state: { themes: [{ id: 'night', touches: ['companion'] }], themeId: 'night', enabledTouches: ['companion'] }, css: '' })
+  return { media, log }
+}
+
+test('reduced motion: the companion is not started while the system asks for less motion', () => {
+  const { log } = reducedMotionWindow(true)
+  assert.deepEqual(log, [])
+})
+
+test('reduced motion: turning it on stops a running companion, turning it off starts it again', () => {
+  const { media, log } = reducedMotionWindow(false)
+  assert.deepEqual(log, ['start'])
+  assert.ok(media.listeners.length > 0, 'the runtime listens for the setting changing')
+  media.flip(true)
+  assert.deepEqual(log, ['start', 'stop'])
+  media.flip(false)
+  assert.deepEqual(log, ['start', 'stop', 'start'])
 })
 
 // The launcher half: what makes the page side above happen on every reload and every window.

@@ -104,6 +104,8 @@ agent 會先問你幾件事：參考圖、配色、角色個性、招牌動作�
 
 寫完跑 `npm run check`，它會抓出已知會讓 Orca 變慢的寫法（[performance.md](docs/performance.md)）。
 
+系統開了「減少動態效果」時，寵物和所有 touch 都不會啟動；在 Orca 開著的時候切換這個設定，牠會當場收起來，關掉後再回來。
+
 ## 文件
 
 | 文件 | 內容 |
