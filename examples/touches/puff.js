@@ -97,6 +97,8 @@
     // without a file it hums silently with notes. Nothing is bundled here.
     sing: { asset: 'lullaby', start: 0, length: 20, volume: 0.35 },
     colors: { sparkle: '#fff6e8', heart: '#f6b3c8', note: '#e8e4ff', trail: '#fff6e8' },
+    // Its own sign over its head: a small gear while an agent works (the `busyToo` act below).
+    emotes: { working: ['⚙', '#e8e4ff'] },
     // Its signature move: a squashy double bounce.
     signature: 'boing',
     acts: {
@@ -112,6 +114,15 @@
       puffUp: {
         weight: (c) => 2 + c.mood.curious,
         run: ({ act, t, at }) => act(at([t(0, 0), t(0, -2, 0, 1.16, 1.12), t(0, -2, 0, 1.16, 1.12), t(0, 0)], [0, 0.3, 0.7, 1]), 1600)
+      },
+      // While an agent works, it now and then looks up with a small gear over its head, so "working" is not
+      // told by the glow's brightness alone (docs/states.md「不只靠顏色」). Never picked when nothing works.
+      busyToo: {
+        weight: (c) => (c.working ? 6 : 0),
+        run: ({ act, t, at, emote }) => {
+          emote('working')
+          act(at([t(0, 0), t(0, -4, 0, 1.03, 0.97), t(0, 0)], [0, 0.5, 1]), 700)
+        }
       },
       // A worried little rain cloud.
       drizzle: {
