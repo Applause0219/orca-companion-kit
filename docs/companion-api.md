@@ -152,6 +152,8 @@ acts: {
 
 `weight(c)` 拿到的 `c`：`{ mood, hour, night, near (游標在附近), working (有 agent 在工作) }`。
 
+動作之間誰能打斷誰（idle、walk、reaction、alert 四層）見 [states.md](states.md)。
+
 內建動作：`wiggle`、`lookAround`、`stretch`、`earFlick`、`loop`、`doze`、`hum`、`chaseStar`、`peek`、`cheer`、`sigh`、`wander`，另有閒置時不會挑到的 `sing`（唱歌）、`juggle`（玩星星雜耍，被抓包的預設場景）。
 
 **會回傳收拾函式的動作**可以當 `caught.scenes`：牠被抓包時先跑這個動作，跳起來的那一刻呼叫回傳的函式把道具拿掉。

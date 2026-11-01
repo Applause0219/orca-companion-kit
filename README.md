@@ -96,6 +96,7 @@ agent 會先問你幾件事：參考圖、配色、角色個性、招牌動作�
 
 - **寵物的個性。** 台詞（包括心情低落、寂寞、鬧彆扭、和好時說的話）、心情分頁用的字（`emotion.words`）、它認得的關鍵字（`words`）、聽到名字時的反應（`names`）、招牌動作和新的動作（`acts`）、要慶祝的紀念日（`milestones`）。內建的反應也能整個換掉。見 [companion-api.md](docs/companion-api.md)。
 - **自己打開的小遊戲和反應。** 設定裡寫一個 `true` 就有：點一下玩捉迷藏（躲到分頁列、側欄、狀態列後面探頭）、`git commit` 蓋章、`git push` 扔紙飛機、離開太久回來撞見它在偷玩、游標停著不動就蹭蹭、開著 Markdown 就戴眼鏡一起讀、傍晚點一盞燈。見 companion-api.md 的「要自己打開的行為」。
+- **哪個動作能蓋過哪個。** 寵物的動作分成 idle、walk、reaction、alert 四層，每層的優先順序、能不能被打斷、能不能打斷自己，寫在 [states.md](docs/states.md)；要加新動作前先看一眼。
 - **聽到某個字就做某件事。** `words` 的 `react` 可以指到任何動作，包括放你自己的音檔：把音檔放進 `~/.orca/themer/assets/`，打「唱歌」它就唱。kit 不附任何音檔。
 - **全新的小功能。** 寵物之外，任何在 Orca 視窗裡跑的效果都可以寫成一個 touch：聚焦光暈、閒置畫面、狀態列裝飾、通知音效……放進 `~/.orca/themer/touches/`，主題列上它的 id 就會啟動，也能在 Ctrl+Alt+T 選單裡單獨開關。見 [touches.md](docs/touches.md)。
 - **可以疊加的樣式片段。** 小段 CSS（例如更圓的邊角）放進 `snippets/`，跟任何主題一起用。見 [themes.md](docs/themes.md#片段snippets)。
@@ -110,6 +111,7 @@ agent 會先問你幾件事：參考圖、配色、角色個性、招牌動作�
 | [docs/ai-guide.md](docs/ai-guide.md) | 給 agent 的工作流程：訪談、產出清單、提示詞範本、驗收 |
 | [docs/themes.md](docs/themes.md) | 主題檔格式、Orca 的 CSS 變數、DOM 掛點、終端機配色、游標、音效 |
 | [docs/companion-api.md](docs/companion-api.md) | `registerCompanion` 完整參考 |
+| [docs/states.md](docs/states.md) | 寵物動作的四層狀態、優先順序與打斷規則 |
 | [docs/touches.md](docs/touches.md) | `registerTouch` 與執行環境 API |
 | [docs/performance.md](docs/performance.md) | **效能守則**，每一條都是實際量到的延遲 |
 | [docs/install.md](docs/install.md) | 安裝、開機啟動、撐過 Orca 更新的原理、疑難排解 |
