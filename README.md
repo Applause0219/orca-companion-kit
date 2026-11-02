@@ -114,6 +114,7 @@ agent 會先問你幾件事：參考圖、配色、角色個性、招牌動作�
 | [docs/themes.md](docs/themes.md) | 主題檔格式、Orca 的 CSS 變數、DOM 掛點、終端機配色、游標、音效 |
 | [docs/companion-api.md](docs/companion-api.md) | `registerCompanion` 完整參考 |
 | [docs/states.md](docs/states.md) | 寵物動作的四層狀態、優先順序與打斷規則 |
+| [docs/hooks-to-states.md](docs/hooks-to-states.md) | Claude Code hook 事件 → 行為標籤 → 寵物狀態的對照，與接 hook 的安全注意事項 |
 | [docs/touches.md](docs/touches.md) | `registerTouch` 與執行環境 API |
 | [docs/performance.md](docs/performance.md) | **效能守則**，每一條都是實際量到的延遲 |
 | [docs/install.md](docs/install.md) | 安裝、開機啟動、撐過 Orca 更新的原理、疑難排解 |
