@@ -112,6 +112,7 @@ agent 會先問你幾件事：參考圖、配色、角色個性、招牌動作�
 | --- | --- |
 | [docs/ai-guide.md](docs/ai-guide.md) | 給 agent 的工作流程：訪談、產出清單、提示詞範本、驗收 |
 | [docs/themes.md](docs/themes.md) | 主題檔格式、Orca 的 CSS 變數、DOM 掛點、終端機配色、游標、音效 |
+| [docs/theme-checklist.md](docs/theme-checklist.md) | 主題作者檢查清單：選擇器怎麼挑、樣式節點固定 id、換頁後再套、失敗時安靜退回 |
 | [docs/companion-api.md](docs/companion-api.md) | `registerCompanion` 完整參考 |
 | [docs/states.md](docs/states.md) | 寵物動作的四層狀態、優先順序與打斷規則 |
 | [docs/hooks-to-states.md](docs/hooks-to-states.md) | Claude Code hook 事件 → 行為標籤 → 寵物狀態的對照，與接 hook 的安全注意事項 |
