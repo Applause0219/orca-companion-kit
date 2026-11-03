@@ -164,6 +164,42 @@ test('missing: a word naming an act the pet does not have falls back to idle, an
   assert.equal(missing.once()('act', 'dance'), true) // each pet keeps its own list
 })
 
+test('idle: 50 seeded picks never do the same act twice in a row, and each wait stays in range', () => {
+  const { idle } = ctx.window.__orcaThemer.companionRules
+  // One act far heavier than the rest, so a repeat would show up at once if the rule slipped.
+  const weights = { wiggle: 10, hop: 1, look: 1, stretch: 0.5, off: 0 }
+  for (const seed of [1, 7, 42]) {
+    const rand = seeded(seed)
+    let last = ''
+    const seen = new Set()
+    for (let i = 0; i < 50; i++) {
+      const act = idle.pick(weights, last, rand, 'wiggle')
+      assert.notEqual(act, last, `seed ${seed}, pick ${i}: ${act} twice`)
+      assert.notEqual(act, 'off', 'a zero weight is never picked')
+      seen.add(act)
+      last = act
+    }
+    assert.ok(seen.size >= 3, `seed ${seed}: only ${[...seen]}`)
+  }
+  // The default [12 s, 30 s], a pet's own idleEvery (8–15 s), and the idle frequency scaling both ends.
+  for (const [range, freq] of [[[12000, 30000], 1], [[8000, 15000], 1], [[8000, 15000], 2], [[12000, 30000], 0.5]]) {
+    const rand = seeded(3)
+    for (let i = 0; i < 50; i++) {
+      const ms = idle.delay(range, freq, rand)
+      assert.ok(ms >= range[0] / freq && ms <= range[1] / freq, `${range} ×${freq}: ${ms}`)
+    }
+  }
+})
+
+test('idle: a rounding sliver still picks a new act; the fallback is only for "nothing else allowed"', () => {
+  const { idle } = ctx.window.__orcaThemer.companionRules
+  // 0.1 + 0.2 + … leaves r a hair above 0 after the last weight when rand is just under 1.
+  const weights = { a: 0.1, b: 0.2, c: 0.3, sig: 0.4 }
+  assert.notEqual(idle.pick(weights, 'sig', () => 0.9999999999999999, 'sig'), 'sig')
+  assert.equal(idle.pick({ sig: 1 }, 'sig', Math.random, 'sig'), 'sig') // the only act there is
+  assert.equal(idle.pick({}, '', Math.random, 'sig'), 'sig')
+})
+
 // A fake label and log, to count what the trace makes and writes.
 const traceWith = (on) => {
   const made = []

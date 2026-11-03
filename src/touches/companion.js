@@ -368,7 +368,22 @@
       stop: drop
     }
   }
-  T.companionRules = { seek: SEEK, gitMoment, isReadable, lanternPhase, defaultWords: DEFAULT_WORDS, openTab, frontTab, goToTab, missing, stateTrace }
+  // Idle picks (docs/states.md): a weighted draw that never takes the act it did last, and the wait before
+  // the next one, a random point in [min, max] sped up or slowed by the idle frequency. `rand` is
+  // Math.random in the engine and a seeded one in the tests. When float rounding leaves a sliver after the
+  // last weight, the last candidate wins, never the fallback (which may be the act it just did); the
+  // fallback is only for "nothing else is allowed".
+  const idleRules = {
+    pick(weights, last, rand, fallback) {
+      const names = Object.keys(weights).filter((n) => n !== last && weights[n] > 0)
+      if (!names.length) return fallback
+      let r = rand() * names.reduce((a, n) => a + weights[n], 0)
+      for (const n of names) if ((r -= weights[n]) <= 0) return n
+      return names[names.length - 1]
+    },
+    delay: ([min, max], freq, rand) => (min + rand() * (max - min)) / freq
+  }
+  T.companionRules = { seek: SEEK, gitMoment, isReadable, lanternPhase, defaultWords: DEFAULT_WORDS, openTab, frontTab, goToTab, missing, stateTrace, idle: idleRules }
 
   // ---------- settings: the catalog the settings panel is drawn from, and the pure helpers ----------
   // Each pet's settings are one object, saved by the launcher as settings.json "companions"[<pet id>]
@@ -1427,9 +1442,7 @@
         const w = (typeof spec.weight === 'function' ? spec.weight(ctx) : spec.weight) * freq(name)
         if (w > 0) weights[name] = w
       }
-      let r = Math.random() * Object.values(weights).reduce((a, b) => a + b, 0)
-      for (const [name, w] of Object.entries(weights)) if ((r -= w) <= 0) return name
-      return signatureName
+      return idleRules.pick(weights, lastAct, Math.random, signatureName)
     }
     const [idleMin, idleMax] = cfg.idleEvery ?? [12000, 30000]
     let idleTimer = 0
@@ -1445,7 +1458,7 @@
           if (Math.random() < 0.15 * freq('talk')) later(1200, () => say(pick(pool), { idle: true }))
         }
         scheduleIdle()
-      }, (idleMin + Math.random() * (idleMax - idleMin)) / freq('idle'))
+      }, idleRules.delay([idleMin, idleMax], freq('idle'), Math.random))
     }
     scheduleIdle()
 
