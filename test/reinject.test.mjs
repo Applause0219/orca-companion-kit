@@ -50,6 +50,9 @@ function element(tagName) {
     setAttribute(name, value) {
       this.attributes[name] = String(value)
     },
+    getAttribute(name) {
+      return this.attributes[name] ?? null
+    },
     removeAttribute(name) {
       delete this.attributes[name]
     },
@@ -72,12 +75,14 @@ function freshWindow(media = { matches: false, addEventListener() {} }, { loaded
   const body = html.appendChild(element('body'))
   const sent = []
   const listeners = []
+  const observers = []
   const document = {
     documentElement: html,
     head,
     body,
     createElement: element,
     getElementById: (id) => all(html).find((n) => n.id === id) ?? null,
+    querySelector: (sel) => (sel === 'meta[name="color-scheme"]' ? all(html).find((n) => n.tagName === 'meta' && n.attributes.name === 'color-scheme') ?? null : null),
     addEventListener(type, fn) {
       if (type === 'DOMContentLoaded' && !loaded) fn()
     }
@@ -88,8 +93,17 @@ function freshWindow(media = { matches: false, addEventListener() {} }, { loaded
     navigator: { platform: 'Win32' },
     matchMedia: () => media,
     MutationObserver: class {
-      observe() {}
-      disconnect() {}
+      constructor(fn) {
+        this.fn = fn
+        this.targets = []
+      }
+      observe(target) {
+        if (!this.targets.includes(target)) this.targets.push(target)
+        if (!observers.includes(this)) observers.push(this)
+      }
+      disconnect() {
+        this.targets = []
+      }
     },
     CustomEvent: class {
       constructor(type) {
@@ -113,6 +127,10 @@ function freshWindow(media = { matches: false, addEventListener() {} }, { loaded
     sent,
     listeners,
     inject: () => vm.runInContext(RUNTIME, context, { filename: 'page-runtime.js' }),
+    // Delivers a DOM change to every observer watching something, as the browser would after a mutation.
+    mutate: () => {
+      for (const o of observers) if (o.targets.length) o.fn([])
+    },
     themeStyles: () => all(html).filter((n) => n.id === 'orca-themer-style')
   }
 }
@@ -165,6 +183,53 @@ test('reinject: a theme <style> already in the page is taken over, not duplicate
   assert.deepEqual(w.themeStyles(), [old])
   assert.equal(old.textContent, 'a{}')
   assert.equal(w.win.document.head.lastElementChild, old)
+})
+
+// The page switching light/dark in place (meta color-scheme, or the root's class/style) fires no event;
+// the runtime's observer re-applies the theme under the same id, so the sheet survives and never doubles.
+test('color scheme: changing meta color-scheme in place keeps exactly one theme <style> with the theme', () => {
+  const w = freshWindow()
+  const { head } = w.win.document
+  const meta = element('meta')
+  meta.setAttribute('name', 'color-scheme')
+  meta.setAttribute('content', 'dark')
+  head.appendChild(meta)
+  w.inject()
+  w.win.__orcaThemer.apply(payload(':root{--background:#000}'))
+  // The page drops our sheet while switching (as a head rewrite would), then flips the scheme.
+  w.themeStyles()[0].remove()
+  meta.setAttribute('content', 'light')
+  w.mutate()
+  let styles = w.themeStyles()
+  assert.equal(styles.length, 1, 'the theme is back, once')
+  assert.equal(styles[0].textContent, ':root{--background:#000}')
+  assert.equal(head.lastElementChild, styles[0], 'still last in <head>')
+  // A stray copy under our id (left by the page) is removed before re-adding, so they never stack.
+  const stray = element('style')
+  stray.id = 'orca-themer-style'
+  w.win.document.body.appendChild(stray)
+  meta.setAttribute('content', 'dark')
+  w.mutate()
+  styles = w.themeStyles()
+  assert.equal(styles.length, 1)
+  assert.equal(styles[0].textContent, ':root{--background:#000}')
+})
+
+test('color scheme: unrelated mutations do not re-add the theme <style>, and theme off stays off', () => {
+  const w = freshWindow()
+  const meta = element('meta')
+  meta.setAttribute('name', 'color-scheme')
+  meta.setAttribute('content', 'dark')
+  w.win.document.head.appendChild(meta)
+  w.inject()
+  w.win.__orcaThemer.apply(payload('a{}'))
+  const sheet = w.themeStyles()[0]
+  w.mutate() // scheme unchanged: nothing is removed or re-added
+  assert.deepEqual(w.themeStyles(), [sheet])
+  w.win.__orcaThemer.apply(payload(''))
+  meta.setAttribute('content', 'light')
+  w.mutate()
+  for (const s of w.themeStyles()) assert.equal(s.textContent, '', 'no theme rules come back after the theme was turned off')
 })
 
 test('reinject: a reload or a new window starts clean and gets the runtime and the theme again', () => {

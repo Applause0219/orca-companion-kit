@@ -47,6 +47,32 @@
     if (el && document.head && document.head.lastElementChild !== el) document.head.appendChild(el)
   })
 
+  // Why: a page switching light/dark in place fires no event we can hook, and may rewrite <head> or the
+  // root's style/class so our sheet is lost or loses its place. Re-apply under the same id (remove every
+  // copy, then add one) but only when the scheme itself changed, so ordinary class toggles cost nothing.
+  const schemeKey = () => {
+    const html = document.documentElement
+    const meta = document.querySelector?.('meta[name="color-scheme"]')
+    return [meta?.getAttribute?.('content') ?? '', html?.style?.colorScheme ?? '', !!html?.classList?.contains('dark'), !!html?.classList?.contains('light')].join('|')
+  }
+  let lastScheme = null
+  function reapplyTheme() {
+    let el
+    while ((el = document.getElementById(STYLE_ID))) el.remove()
+    if (css) styleElement().textContent = suspended.css ? '' : css
+  }
+  const schemeObserver = new MutationObserver(() => {
+    const key = schemeKey()
+    if (key === lastScheme) return
+    lastScheme = key
+    reapplyTheme()
+  })
+  function observeScheme() {
+    lastScheme ??= schemeKey()
+    schemeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style'] })
+    schemeObserver.observe(document.head, { childList: true, subtree: true, attributes: true, attributeFilter: ['content', 'name'] })
+  }
+
   function whenReady(fn) {
     if (document.head && document.body) fn()
     else document.addEventListener('DOMContentLoaded', fn, { once: true })
@@ -127,6 +153,7 @@
       ensureUiStyle()
       styleElement().textContent = suspended.css ? '' : css
       headObserver.observe(document.head, { childList: true })
+      observeScheme()
       document.documentElement.dataset.orcaTheme = state.themeId ?? ''
       syncTouches()
       renderPicker()
