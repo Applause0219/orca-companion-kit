@@ -39,5 +39,5 @@
 
 ## 寫完之後
 
-- [ ] 跑 `npm run check`，抓出已知會讓 Orca 變慢的寫法。
+- [ ] 跑 `npm run check`，抓出已知會讓 Orca 變慢的寫法。上面「避開」的 `nth-child`、雜湊 class、比對文字也會出 `fragile-selector` 警告（只提醒、不擋），看到就改用 role／aria 或穩定屬性。
 - [ ] 主題某塊沒套上或被蓋掉時，照 [debug-theme-overwritten.md](debug-theme-overwritten.md) 用 DevTools 查。

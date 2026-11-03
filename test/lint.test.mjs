@@ -57,6 +57,44 @@ test('lint: touch rules (syntax, Esc, IME, readback, cleanup)', () => {
   assert.deepEqual(lintTouch('T.registerPickerItem({id:"p",run(){const nav=document.createElement("div");nav.addEventListener("keydown",f);nav.removeEventListener("keydown",f)}})'), [])
 })
 
+test('lint: warns (never errors) about fragile selectors in CSS', () => {
+  const fragile = (css) => lintCss(css).filter((i) => i.rule === 'fragile-selector')
+  assert.equal(fragile('.tabs > div:nth-child(2){color:red}').length, 1)
+  assert.equal(fragile('li:nth-of-type(3){color:red}').length, 1)
+  assert.equal(fragile('.css-1x2y3z{color:red}').length, 1)
+  assert.equal(fragile('._a8f3c{color:red}').length, 1)
+  assert.equal(fragile('.sc-bdVaJa span{color:red}').length, 1)
+  assert.equal(fragile('a{color:red}\n\n.css-1x2y3z{color:red}')[0].line, 3)
+  assert.ok(lintCss('div:nth-child(2), .css-1x2y3z{color:red}').every((i) => i.level === 'warn'))
+  // Stable hooks, values and strings are not selectors to warn about.
+  assert.deepEqual(lintCss("[role='separator'], [aria-selected='true'], [data-testid=\"sortable-tab\"]{color:red}"), [])
+  assert.deepEqual(lintCss('.monaco-editor .xterm-viewport, .bg-worktree-sidebar, .xterm-256color{color:red}'), [])
+  assert.deepEqual(lintCss(".a{transition:opacity 0.25s;font-family:'Noto Sans TC'}\n@media (min-width:40.5em){.b{color:red}}"), [])
+  assert.deepEqual(lintCss("[aria-label='x.css-1x2y3z']{color:red}"), [])
+  assert.deepEqual(lintCss('/* .css-1x2y3z li:nth-child(2) */ a{color:red}'), [])
+})
+
+test('lint: warns (never errors) about fragile selectors and text matching in touches', () => {
+  const fragile = (code) => {
+    const issues = lintTouch(`T.registerTouch("x",{start(){${code}\n}})`)
+    assert.ok(!issues.some((i) => i.rule === 'syntax'), code)
+    return issues.filter((i) => i.rule === 'fragile-selector')
+  }
+  assert.equal(fragile('document.querySelector(".tabs > button:nth-child(2)")').length, 1)
+  assert.equal(fragile("document.querySelectorAll('.css-1x2y3z')").length, 1)
+  assert.equal(fragile('el.closest(`.sc-bdVaJa`)').length, 1)
+  assert.equal(fragile('const b=[...document.querySelectorAll("button")].find((b)=>b.textContent==="設定")').length, 1)
+  assert.equal(fragile('if(el.innerText.trim()==="Settings")x()').length, 1)
+  assert.equal(fragile('if(el.textContent?.includes("終端機"))x()').length, 1)
+  assert.equal(fragile('if(/設定/.test(el.textContent))x()').length, 1)
+  assert.ok(lintTouch('T.registerTouch("x",{start(){document.querySelector("li:nth-child(2)")}})').every((i) => i.level === 'warn'))
+  // Stable hooks and writing text are fine.
+  assert.deepEqual(fragile("document.querySelector('[role=\"tab\"][aria-selected=\"true\"]')"), [])
+  assert.deepEqual(fragile("document.querySelector('[data-testid=\"sortable-tab\"] .monaco-editor')"), [])
+  assert.deepEqual(fragile('el.textContent = "✦"; const t = tab?.getAttribute("data-tab-title") ?? tab?.textContent ?? ""'), [])
+  assert.deepEqual(fragile('// el.textContent === "x" and li:nth-child(2) only in a comment'), [])
+})
+
 test('lint: terminal palettes need #hex colors', () => {
   assert.equal(lintTerminal('{"background":"red"}').some((i) => i.rule === 'terminal-color'), true)
   assert.equal(lintTerminal('nope')[0].rule, 'json')

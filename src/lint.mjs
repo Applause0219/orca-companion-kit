@@ -8,6 +8,23 @@ const stripCss = (css) =>
     .replace(/url\((?:"[^"]*"|'[^']*'|[^)]*)\)/g, 'url()')
 const lineOf = (text, index) => text.slice(0, index).split('\n').length
 
+// Fragile selectors (docs/theme-checklist.md): they break when Orca adds a button, rebuilds, or changes
+// language. These are only warnings; the fix is role/aria or a stable attribute (data-testid, data-*).
+const FRAGILE_HINT = 'prefer role/aria or a stable attribute (data-testid, data-*); see docs/theme-checklist.md'
+const NTH = /:nth-(?:child|last-child|of-type|last-of-type)\(/g
+const transitions = (s, a, b) => {
+  let n = 0
+  for (let i = 1; i < s.length; i++) if ((a.test(s[i - 1]) && b.test(s[i])) || (b.test(s[i - 1]) && a.test(s[i]))) n++
+  return n
+}
+/** A build-generated class name: .css-1x2y3z, ._a8f3c, .sc-bdVaJa (not .monaco-editor or .xterm-256color). */
+export function looksHashed(name) {
+  if (/^_+[a-zA-Z0-9]{5,}$/.test(name) && /\d/.test(name)) return true
+  return name.split(/[-_]/).some((part) => /^[a-zA-Z0-9]{5,}$/.test(part) && (transitions(part, /\d/, /[a-zA-Z]/) >= 2 || transitions(part, /[a-z]/, /[A-Z]/) >= 3))
+}
+const CLASS_TOKEN = /\.(-?[_a-zA-Z][\w-]*)/g
+const hashedClasses = (selector) => [...selector.matchAll(CLASS_TOKEN)].filter((m) => looksHashed(m[1]))
+
 /** Returns [{ level: 'error' | 'warn', line, rule, message }] for one CSS file. */
 export function lintCss(css) {
   const issues = []
@@ -28,6 +45,13 @@ export function lintCss(css) {
   // 4. Filters and backdrop blurs on the whole window are re-composited every frame the terminal draws.
   for (const m of src.matchAll(/(^|[},]\s*)(html|body|:root|#root)\s*\{[^}]*\b(backdrop-filter|filter)\s*:/gm))
     issues.push({ level: 'warn', line: lineOf(src, m.index), rule: 'window-filter', message: `${m[3]} on ${m[2]} (the whole window re-composites on every terminal redraw)` })
+  // 5. Fragile selectors. Only selectors are scanned: the innermost {…} blocks (declarations) are blanked
+  //    out first, keeping line numbers, so values like 0.5s or font names are never read as classes.
+  const selectors = src.replace(/\{[^{}]*\}/g, (b) => b.replace(/[^\n]/g, ' ')).replace(/"[^"\n]*"|'[^'\n]*'/g, (q) => q.replace(/[^\n]/g, ' '))
+  for (const m of selectors.matchAll(NTH))
+    issues.push({ level: 'warn', line: lineOf(selectors, m.index), rule: 'fragile-selector', message: `${m[0].slice(0, -1)} breaks when Orca adds or removes an element; ${FRAGILE_HINT}` })
+  for (const m of hashedClasses(selectors))
+    issues.push({ level: 'warn', line: lineOf(selectors, m.index), rule: 'fragile-selector', message: `.${m[1]} looks like a generated (hashed) class that can change on every Orca build; ${FRAGILE_HINT}` })
   return issues
 }
 
@@ -60,6 +84,22 @@ export function lintTouch(source, filename = 'touch.js') {
   // keys) is not typing.
   if (/(?:^|[^.\w$]|(?:window|document|globalThis)\.)addEventListener\(\s*['"`]keydown/m.test(code) && !/compositionupdate|compositionend/.test(code))
     issues.push({ level: 'warn', line: 1, rule: 'ime', message: 'listens to keydown only: Windows IMEs send keydown for the first composing key only; also listen to compositionupdate/compositionend' })
+  // Fragile selectors: nth-child anywhere (injected CSS or a query), hashed classes in a query, and finding
+  // Orca's elements by their text (Orca is localized, so the text changes with the language and with each release).
+  find(new RegExp(NTH.source), 'warn', 'fragile-selector', `nth-child/nth-of-type breaks when Orca adds or removes an element; ${FRAGILE_HINT}`)
+  for (const m of code.matchAll(/\b(?:querySelector(?:All)?|closest|matches)\(\s*(['"`])((?:\\.|(?!\1)[^\\])*)\1/g)) {
+    const hashed = hashedClasses(m[2].replace(/"[^"]*"|'[^']*'/g, ''))[0]
+    if (hashed) {
+      issues.push({ level: 'warn', line: lineOf(code, m.index), rule: 'fragile-selector', message: `.${hashed[1]} looks like a generated (hashed) class that can change on every Orca build; ${FRAGILE_HINT}` })
+      break
+    }
+  }
+  find(
+    /\.(?:textContent|innerText)\s*(?:\??\.\s*trim\(\)\s*)?(?:===?|!==?|\??\.\s*(?:includes|startsWith|endsWith|match|indexOf)\()|\.test\(\s*[\w$.?]*\.(?:textContent|innerText)\b/,
+    'warn',
+    'fragile-selector',
+    `finds an element by its text (it changes with Orca's language and wording); ${FRAGILE_HINT}`,
+  )
   if (/setInterval\(/.test(code) && !/clearInterval\(/.test(code))
     issues.push({ level: 'warn', line: 1, rule: 'cleanup', message: 'setInterval without clearInterval: clear every timer in the stop function' })
   if (/addEventListener\(/.test(code) && !/removeEventListener\(/.test(code) && !/registerCompanion\(/.test(code))
