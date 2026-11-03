@@ -343,7 +343,32 @@
       return true
     }
   }
-  T.companionRules = { seek: SEEK, gitMoment, isReadable, lanternPhase, defaultWords: DEFAULT_WORDS, openTab, frontTab, goToTab, missing }
+  // Dev aid (settings row debugState, off by default; docs/states.md): the current `mode` over its head
+  // and one console.debug line per change, "old→new（why）". `isOn()` is read at every call; while it is
+  // off nothing is made and nothing is logged. `make()` builds the label (the engine's DOM), `log` writes.
+  function stateTrace(isOn, { make, log }) {
+    let tag = null
+    const drop = () => {
+      tag?.remove()
+      tag = null
+    }
+    const show = (now) => ((tag ??= make()).textContent = now)
+    return {
+      change(from, to, why) {
+        if (from === to) return
+        if (!isOn()) return drop()
+        log(`${from}→${to}（${why}）`)
+        show(to)
+      },
+      // The switch may flip between changes: the label comes or goes at once.
+      sync(now) {
+        if (isOn()) show(now)
+        else drop()
+      },
+      stop: drop
+    }
+  }
+  T.companionRules = { seek: SEEK, gitMoment, isReadable, lanternPhase, defaultWords: DEFAULT_WORDS, openTab, frontTab, goToTab, missing, stateTrace }
 
   // ---------- settings: the catalog the settings panel is drawn from, and the pure helpers ----------
   // Each pet's settings are one object, saved by the launcher as settings.json "companions"[<pet id>]
@@ -475,7 +500,8 @@
           { kind: 'home', id: 'home', label: '回到原位', desc: '送牠回預設的位置，拖過的新家不算了。' },
           { kind: 'stats', id: 'stats', label: '你們的回憶' },
           { kind: 'forget', id: 'forget', label: '忘掉回憶', desc: '一起的天數、摸摸次數、紀念日都歸零，從頭認識你。設定會留著。' },
-          { kind: 'resetAll', id: 'resetAll', label: '設定全部恢復預設', desc: '開關、頻率、聲音都回到原本的樣子，回憶不受影響。' }
+          { kind: 'resetAll', id: 'resetAll', label: '設定全部恢復預設', desc: '開關、頻率、聲音都回到原本的樣子，回憶不受影響。' },
+          f('debugState', '開發：顯示狀態', '在牠頭上顯示現在的狀態（home、asleep、flying……），每次轉換在主控台記一行「舊→新（原因）」。抓狀態亂跳的問題用。', { on: () => false, preview: false })
         ]
       }
     ]
@@ -844,7 +870,23 @@
     }
 
     let stopped = false // late timers check this after stop()
-    let mode = 'home' // home | asleep | flying | following | visiting
+    let mode = 'home' // home | asleep | flying | following | visiting | hiding
+    // Every change of `mode` goes through here, so the debugState row can show and log it.
+    const trace = T.companionRules.stateTrace(() => on('debugState'), {
+      make: () => {
+        const el = document.createElement('div')
+        el.dataset.companionState = ''
+        el.style.cssText = 'position:absolute;left:50%;bottom:100%;transform:translate(-50%,-4px);padding:1px 5px;border-radius:4px;background:rgb(0 0 0 / .65);color:#fff;font:600 10px/1.4 ui-monospace,monospace;white-space:nowrap;pointer-events:none'
+        home.appendChild(el)
+        return el
+      },
+      log: (line) => console.debug(`[companion ${id}] ${line}`)
+    })
+    const setMode = (to, why) => {
+      const from = mode
+      mode = to
+      trace.change(from, to, why)
+    }
     let busy = null // the action playing now; idle picks wait for it
     let drag = null
     let roaming = false // out for a little stroll: don't snap it home
@@ -1672,7 +1714,7 @@
     const visit = async (tab) => {
       if (tab && mode === 'hiding') endSeek() // a tab waiting for you beats the game
       if (tab && mode === 'home' && !busy && !drag) {
-        mode = 'visiting'
+        setMode('visiting', '有分頁在等你')
         visitingTab = tab
         // A tab of a worktree not in front: it knocks on that worktree's row in the sidebar instead.
         await loadStore()
@@ -1690,9 +1732,9 @@
       knock?.cancel()
       knock = null
       visitingTab = null
-      mode = 'flying'
+      setMode('flying', '不用敲門了，飛回家')
       await flyTo(homeSpot(), 800)
-      if (!stopped) mode = 'home'
+      if (!stopped) setMode('home', '敲完門回到家')
     }
     const lastStatus = new WeakMap()
     let knockHold = 0
@@ -1777,7 +1819,7 @@
     }
     const sleep = (force = false) => {
       if (mode !== 'home' || document.hidden || (!force && (busy || !on('sleep')))) return
-      mode = 'asleep'
+      setMode('asleep', force ? '試試看睡覺' : '一陣子沒動靜')
       setFace('sleep')
       hold([{ opacity: 1 }, { opacity: 0.75 }], { duration: 1600, fill: 'forwards' })
       dozing = bob.animate([{ transform: 'rotate(0deg)' }, { transform: 'rotate(-10deg) translateY(4px)' }], { duration: 1800, easing: 'ease-in-out', fill: 'forwards', composite: 'add' })
@@ -1795,7 +1837,7 @@
       clearTimeout(sleepTimer)
       sleepTimer = setTimeout(sleep, sleepAfter())
       if (mode !== 'asleep') return
-      mode = 'home'
+      setMode('home', '醒來')
       clearTimeout(zTimer)
       release()
       dozing?.cancel()
@@ -1945,7 +1987,7 @@
     let flightRaf = 0
     let landTimer = 0
     const throwIt = (vx, vy) => {
-      mode = 'flying'
+      setMode('flying', '被甩出去')
       const back = homeSpot()
       const p = { ...spot }
       let last = performance.now()
@@ -1984,7 +2026,7 @@
           if (stopped) return
           await flyTo(back, 1100)
           if (stopped) return
-          mode = 'home'
+          setMode('home', '落地飛回家')
           signature()
         }, 700)
       }
@@ -2010,7 +2052,7 @@
         if (mode === 'visiting') {
           knock?.cancel()
           visitingTab = null
-          mode = 'home'
+          setMode('home', '敲門時被拖走')
         }
       }
       const tilt = Math.max(-18, Math.min(18, (e.clientX - drag.lastX) * 1.5))
@@ -2036,8 +2078,8 @@
       if (dt > 0 && performance.now() - last.t < 80 && Math.hypot(vx, vy) > 0.8 && on('throw')) return throwIt(vx, vy)
       if (!on('drag')) {
         // Only throwing is allowed: a calm drop floats back home instead of moving it.
-        mode = 'flying'
-        return void flyTo(homeSpot(), 700).then(() => !stopped && mode === 'flying' && (mode = 'home'))
+        setMode('flying', '放下，不能搬家')
+        return void flyTo(homeSpot(), 700).then(() => !stopped && mode === 'flying' && setMode('home', '飛回家'))
       }
       place(spot)
       saveSpot()
@@ -2085,7 +2127,7 @@
     }
     const stopFollow = () => {
       if (mode !== 'following') return
-      mode = 'home'
+      setMode('home', '不跟了')
       removeEventListener('pointermove', onFollowMove, true)
       place(spot)
       saveSpot()
@@ -2105,7 +2147,7 @@
       if (mode === 'following') return stopFollow()
       if (!['home', 'asleep'].includes(mode)) return
       wake()
-      mode = 'following'
+      setMode('following', '雙擊，跟著游標')
       addEventListener('pointermove', onFollowMove, true)
       twirl()
       sound('follow', 0.05)
@@ -2469,7 +2511,7 @@
       later(0, lanternTick) // the lantern comes back once the game is over
       if (!snap) return
       release()
-      mode = 'home'
+      setMode('home', '捉迷藏中斷')
       place(homeSpot())
       home.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300 })
     }
@@ -2482,7 +2524,7 @@
       clearTimeout(s.next)
       clearTimeout(s.giveUp)
       s.ducked = false
-      mode = 'flying'
+      setMode('flying', found ? '被找到了' : '沒被找到，時間到')
       setFace('happy')
       const g = seekGeom()
       const pop = seekPose(g.pop, found ? 300 : 520, { easing: 'cubic-bezier(.3,1.5,.5,1)' })
@@ -2505,7 +2547,7 @@
       await flyTo(homeSpot(), 900)
       unslide.cancel()
       if (stopped || mode !== 'flying') return
-      mode = 'home'
+      setMode('home', '捉迷藏結束回到家')
       setFace(null)
       if (found) {
         twirl()
@@ -2557,7 +2599,7 @@
       busy = null
       hush()
       hideLantern(false) // a lit lantern would give the hiding place away
-      mode = 'hiding'
+      setMode('hiding', want ? '試試看捉迷藏' : '開始捉迷藏')
       seek = { spot: null, since: Date.now(), timers: new Set(), next: 0, giveUp: 0, resized: 0, pose: null, d: 0, ducked: false, coming: 0, checked: 0, startled: 0, geom: null }
       const s = seek
       hold([{ opacity: 1, transform: `${home.style.transform} scale(1)` }, { opacity: 0, transform: `${home.style.transform} scale(.4)` }], { duration: 280, fill: 'forwards' }).onfinish = () => {
@@ -2903,7 +2945,7 @@
         knock?.cancel()
         knock = null
         visitingTab = null
-        mode = 'home'
+        setMode('home', '試試看前清乾淨')
         place(homeSpot())
       }
       if (reading) endReading()
@@ -2928,13 +2970,13 @@
         later(7000, () => mode === 'hiding' && comeHome(true))
       },
       drag: async () => {
-        mode = 'flying'
+        setMode('flying', '試試看拖曳')
         await flyTo(clamp({ x: spot.x + sideways() * 110, y: spot.y - 40 }), 900)
         await wait(500)
         if (stopped || mode !== 'flying') return
         await flyTo(homeSpot(), 900)
         if (stopped || mode !== 'flying') return
-        mode = 'home'
+        setMode('home', '試試看拖曳結束')
         signature()
       },
       throw: () => throwIt(sideways() * 1.6, -0.9),
@@ -3014,12 +3056,14 @@
     // Only a switch that just went off (or the sleep timing) changes what is on screen; a preview, a
     // theme switch or another window's unrelated change leaves the pet alone.
     let seen = conf()
+    if (seen.features.debugState) trace.sync(mode) // switched on before this window opened
     const refresh = () => {
       if (stopped || previewing()) return // picked up by the next change after the preview
       const was = seen
       const now = conf()
       if (now === was) return
       seen = now
+      if (was.features.debugState !== now.features.debugState) trace.sync(mode)
       const wentOff = (f) => was.features[f] !== false && now.features[f] === false
       if (mode === 'following' && wentOff('follow')) stopFollow()
       if (mode === 'hiding' && wentOff('seek')) endSeek()
@@ -3203,6 +3247,7 @@
 
     return () => {
       stopped = true
+      trace.stop()
       if (T.companions.get(id) === api) T.companions.delete(id)
       loops.forEach((a) => a.cancel())
       setVigil(false)

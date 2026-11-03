@@ -13,7 +13,7 @@ test('states.md names the four layers', () => {
 
 test('every mode the engine sets is in states.md', () => {
   const engine = read('src/touches/companion.js')
-  const modes = new Set([...engine.matchAll(/\bmode = '([a-z]+)'/g)].map((m) => m[1]))
+  const modes = new Set([...engine.matchAll(/\b(?:mode = |setMode\()'([a-z]+)'/g)].map((m) => m[1]))
   assert.ok(modes.size >= 6, `found only ${[...modes]}`)
   for (const mode of modes) assert.ok(doc.includes(`\`${mode}\``), `mode '${mode}' is missing from docs/states.md`)
 })

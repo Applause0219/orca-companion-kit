@@ -11,7 +11,7 @@ const REPO = path.resolve(import.meta.dirname, '..')
 const ctx = { window: { __orcaThemer: { registerTouch() {} } } }
 vm.createContext(ctx)
 vm.runInContext(fs.readFileSync(path.join(REPO, 'src', 'touches', 'companion.js'), 'utf8'), ctx)
-const { seek, gitMoment, isReadable, lanternPhase, defaultWords, missing } = ctx.window.__orcaThemer.companionRules
+const { seek, gitMoment, isReadable, lanternPhase, defaultWords, missing, stateTrace } = ctx.window.__orcaThemer.companionRules
 const { spots, pick, OUT, ROT } = seek
 
 // A small repeatable random (mulberry32).
@@ -162,4 +162,62 @@ test('missing: a word naming an act the pet does not have falls back to idle, an
   assert.equal(first('sound', '--asset-lullaby'), true) // a missing sound is counted apart
   assert.equal(first('sound', '--asset-lullaby'), false)
   assert.equal(missing.once()('act', 'dance'), true) // each pet keeps its own list
+})
+
+// A fake label and log, to count what the trace makes and writes.
+const traceWith = (on) => {
+  const made = []
+  const lines = []
+  const tr = stateTrace(() => on.value, {
+    make: () => {
+      const el = { textContent: '', removed: false, remove() { this.removed = true } }
+      made.push(el)
+      return el
+    },
+    log: (line) => lines.push(line)
+  })
+  return { tr, made, lines }
+}
+
+test('debugState: switched off, a change makes no label and logs nothing', () => {
+  const on = { value: false }
+  const { tr, made, lines } = traceWith(on)
+  tr.change('home', 'asleep', '一陣子沒動靜')
+  tr.change('asleep', 'home', '醒來')
+  tr.sync('home')
+  tr.stop()
+  assert.equal(made.length, 0)
+  assert.equal(lines.length, 0)
+})
+
+test('debugState: switched on, the label shows the state and each change logs "old→new（why）" once', () => {
+  const on = { value: true }
+  const { tr, made, lines } = traceWith(on)
+  tr.change('home', 'following', '雙擊，跟著游標')
+  tr.change('following', 'following', 'again') // not a change: nothing
+  tr.change('following', 'home', '不跟了')
+  assert.equal(made.length, 1, 'one label, reused')
+  assert.equal(made[0].textContent, 'home')
+  assert.deepEqual(lines, ['home→following（雙擊，跟著游標）', 'following→home（不跟了）'])
+  // Switched off between changes: the label goes, and the next change neither logs nor brings it back.
+  on.value = false
+  tr.sync('home')
+  assert.equal(made[0].removed, true)
+  tr.change('home', 'asleep', '一陣子沒動靜')
+  assert.equal(made.length, 1)
+  assert.equal(lines.length, 2)
+  // On again: sync shows the state at once, without waiting for a change; stop takes it away.
+  on.value = true
+  tr.sync('asleep')
+  assert.equal(made.length, 2)
+  assert.equal(made[1].textContent, 'asleep')
+  tr.stop()
+  assert.equal(made[1].removed, true)
+})
+
+test('debugState: every change of mode in the engine goes through setMode, and the row is off by default', () => {
+  const src = fs.readFileSync(path.join(REPO, 'src', 'touches', 'companion.js'), 'utf8')
+  const bare = src.split('\n').filter((l) => /(^|[^=!<>\w.])mode\s*=\s*['"]/.test(l) && !/let mode = 'home'/.test(l))
+  assert.deepEqual(bare, [], 'assign mode with setMode(to, why)')
+  assert.match(src, /f\('debugState',[^\n]*on: \(\) => false, preview: false/)
 })
