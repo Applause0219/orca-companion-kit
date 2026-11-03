@@ -65,7 +65,8 @@ function all(node, out = []) {
 }
 
 /** A fresh document, as after a reload or in a newly opened window. */
-function freshWindow(media = { matches: false, addEventListener() {} }) {
+// loaded: the page finished loading before the runtime arrived, so DOMContentLoaded never fires again.
+function freshWindow(media = { matches: false, addEventListener() {} }, { loaded = false } = {}) {
   const html = element('html')
   const head = html.appendChild(element('head'))
   const body = html.appendChild(element('body'))
@@ -78,7 +79,7 @@ function freshWindow(media = { matches: false, addEventListener() {} }) {
     createElement: element,
     getElementById: (id) => all(html).find((n) => n.id === id) ?? null,
     addEventListener(type, fn) {
-      if (type === 'DOMContentLoaded') fn()
+      if (type === 'DOMContentLoaded' && !loaded) fn()
     }
   }
   const win = {
@@ -140,6 +141,16 @@ test('reinject: applying again reuses the theme <style>, never adds a second one
   assert.equal(styles.length, 1)
   assert.equal(styles[0].textContent, ':root{--background:#111}')
   assert.equal(w.win.document.head.lastElementChild, styles[0], 'kept last in <head> so it wins ties')
+  assert.equal(w.win.document.documentElement.dataset.orcaTheme, 'night')
+})
+
+test('reinject: a page that finished loading before the runtime arrived gets the theme at once (DOMContentLoaded will not fire again)', () => {
+  const w = freshWindow(undefined, { loaded: true })
+  w.inject()
+  w.win.__orcaThemer.apply(payload(':root{--background:#000}'))
+  const styles = w.themeStyles()
+  assert.equal(styles.length, 1)
+  assert.equal(styles[0].textContent, ':root{--background:#000}')
   assert.equal(w.win.document.documentElement.dataset.orcaTheme, 'night')
 })
 
