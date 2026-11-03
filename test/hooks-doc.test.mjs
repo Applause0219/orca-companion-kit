@@ -30,12 +30,17 @@ test('the states it maps to exist in states.md', () => {
   }
 })
 
-test('it keeps the three safety notes', () => {
+test('it keeps the four safety notes', () => {
+  assert.match(doc, /## 接 hook 時要注意的四件事/)
   assert.match(doc, /### 1\. `permission_prompt` 要最顯眼/)
   assert.match(doc, /### 2\. hook 要非同步/)
   assert.match(doc, /"async": true/)
   assert.match(doc, /### 3\. 不要把 stdin 直接塞進指令/)
   assert.match(doc, /JSON\.parse\(readFileSync\(0/)
+  assert.match(doc, /### 4\. hook 用你的完整權限跑；擋 `\.env` 時 `Read` 和 `Bash` 都要擋/)
+  assert.match(doc, /"Read\(\.\/\.env\)"/)
+  assert.match(doc, /"Bash\(cat \.env\*\)"/)
+  assert.match(doc, /\(https:\/\/github\.com\/anthropics\/claude-code\/blob\/main\/CHANGELOG\.md\)/)
 })
 
 test('README links to hooks-to-states.md and it links back to states.md', () => {

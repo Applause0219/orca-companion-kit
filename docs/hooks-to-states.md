@@ -46,7 +46,7 @@ hook 事件很多，直接拿來對應動作會太吵。先收斂成六個標籤
 - **`success`、`error` 演一次就收。** 遇到牠正在忙，`success` 跳過就好；`error` 照演。這和 states.md「現況和規則不一樣的地方」寫的行為一致。
 - 同時有好幾個 session：任何一個在 `waiting`，就以 `waiting` 為準；否則有任何一個在 `thinking`／`reading`／`testing` 就算工作中。
 
-## 接 hook 時要注意的三件事
+## 接 hook 時要注意的四件事
 
 ### 1. `permission_prompt` 要最顯眼
 
@@ -67,6 +67,29 @@ hook 從 stdin 拿到一份 JSON，裡面有工具的參數，例如 `Bash` 要�
 - **不要**寫成 `sh -c "echo $(cat) >> log"`、`` `cat` `` 拼進命令列、或把欄位接進另一條 shell 指令；
 - **要**用一個小程式把 stdin 當資料解析（`JSON.parse`），只取你要的欄位，只輸出固定的標籤字串；
 - 寫進檔案的只有標籤和時間，不要把整份 stdin（可能有密鑰、私人路徑）存下來。
+
+### 4. hook 用你的完整權限跑；擋 `.env` 時 `Read` 和 `Bash` 都要擋
+
+hook 不是在沙盒裡跑的：它拿到的權限就是你這個使用者的權限，能讀你讀得到的每個檔案。原生 Windows 上也沒有沙盒可以替你把關，所以 hook 和 agent 本身的權限規則都要自己收緊。
+
+常見的漏洞是只擋了一邊：在 `permissions.deny` 寫了 `Read(./.env)`，擋住的是 `Read` 這類讀檔工具，agent 還是可能用 `Bash` 跑 `cat .env` 讀到同一個檔案。要擋就兩邊一起寫：
+
+```json
+{
+  "permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Bash(cat .env*)",
+      "Bash(type .env*)"
+    ]
+  }
+}
+```
+
+- `Bash` 的規則是比對指令字串，換個寫法（`less`、`head`、`Get-Content`……）就可能繞過去，所以這只是補一道，不是保證；真正的密鑰最好不要放在 agent 能碰到的資料夾；
+- 你自己的 hook 也一樣：不要讀 `.env`，也不要把讀到的內容寫進記錄檔；
+- 權限規則和 hook 的行為會隨版本改，接之前先看官方的 [Claude Code changelog](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md)。
 
 ## 通用範例
 
