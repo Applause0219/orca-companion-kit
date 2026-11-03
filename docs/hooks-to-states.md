@@ -91,6 +91,50 @@ hook 不是在沙盒裡跑的：它拿到的權限就是你這個使用者的權
 - 你自己的 hook 也一樣：不要讀 `.env`，也不要把讀到的內容寫進記錄檔；
 - 權限規則和 hook 的行為會隨版本改，接之前先看官方的 [Claude Code changelog](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md)。
 
+#### 再補一道：用 `PreToolUse` hook 擋提到 `.env` 的指令
+
+`deny` 規則只認得你列出來的寫法。想多擋一層，可以加一個 `PreToolUse` hook：工具要跑的指令或要讀的路徑裡只要出現 `.env`，就回傳 `deny`。這個 hook 只看 stdin 給它的工具參數，**自己不讀任何檔案、也不寫任何記錄**。
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash|PowerShell|Read|Grep|Glob", "hooks": [{ "type": "command", "command": "node env-guard.mjs", "timeout": 5 }] }
+    ]
+  }
+}
+```
+
+這個 hook **不能**加 `"async": true`：背景跑的 hook 來不及擋，工具早就執行了。它只比對字串、立刻結束，同步跑也不會拖慢 agent。
+
+`env-guard.mjs`：
+
+```js
+import { readFileSync } from 'node:fs'
+
+let event = {}
+try { event = JSON.parse(readFileSync(0, 'utf8')) } catch {}
+
+// Look only at the tool's arguments (command, path, pattern). Never open .env, never log anything.
+const input = event.tool_input ?? {}
+const text = [input.command, input.file_path, input.path, input.pattern, input.glob].filter(Boolean).join('\n')
+const MENTIONS_ENV = /(^|[\s"'`\/\\=:(*])\.env\b/
+
+if (MENTIONS_ENV.test(text)) {
+  process.stdout.write(JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'deny',
+      permissionDecisionReason: 'This project does not let agents read .env files.',
+    },
+  }))
+}
+```
+
+- 它擋的是「指令裡寫了 `.env`」，所以 `less .env`、`Get-Content .env`、`Read(./.env.local)` 都會被擋；但把檔名拆開拼（例如用變數組出來）還是可能繞過。它和 `deny` 一樣只是多一道，不是保證；
+- 誤擋也有可能（例如指令裡剛好有 `.env` 這幾個字）。被擋時 agent 會看到上面那句原因，你可以自己決定要不要放行；
+- hook 壞掉（讀不到 JSON）時什麼都不輸出，等於不表態，交回一般的權限規則處理。
+
 ## 通用範例
 
 設定（放在專案或使用者的 Claude Code 設定裡）。這裡只示範三個事件，其他照對照表加：

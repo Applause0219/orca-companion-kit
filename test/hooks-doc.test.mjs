@@ -43,6 +43,27 @@ test('it keeps the four safety notes', () => {
   assert.match(doc, /\(https:\/\/github\.com\/anthropics\/claude-code\/blob\/main\/CHANGELOG\.md\)/)
 })
 
+test('it shows a PreToolUse hook that denies .env without reading it', () => {
+  assert.match(doc, /#### 再補一道：用 `PreToolUse` hook 擋提到 `\.env` 的指令/)
+  const start = doc.indexOf('`env-guard.mjs`：')
+  assert.ok(start > 0, 'env-guard.mjs example is missing')
+  const block = doc.slice(start).match(/```js\r?\n([\s\S]*?)```/)
+  assert.ok(block, 'env-guard.mjs has no js block')
+  const code = block[1]
+  assert.match(code, /JSON\.parse\(readFileSync\(0, 'utf8'\)\)/)
+  assert.match(code, /hookEventName: 'PreToolUse'/)
+  assert.match(code, /permissionDecision: 'deny'/)
+  // The only file it may read is stdin (fd 0); it must never open .env or write a log.
+  const reads = code.match(/readFileSync\([^)]*\)/g) ?? []
+  assert.deepEqual(reads, ["readFileSync(0, 'utf8')"])
+  assert.doesNotMatch(code, /dotenv|createReadStream|readFile\(|openSync|writeFile|appendFile|createWriteStream|console\.(log|error)/)
+  assert.doesNotMatch(code, /readFileSync\([^0]/)
+  // A guard has to run before the tool does, so its settings must not be async.
+  const settings = doc.slice(doc.indexOf('#### 再補一道'), start)
+  assert.match(settings, /"command": "node env-guard\.mjs"/)
+  assert.doesNotMatch(settings.match(/```json\r?\n([\s\S]*?)```/)[1], /"async"/)
+})
+
 test('the deny example is valid JSON and blocks .env through both Read and Bash', () => {
   const blocks = [...doc.matchAll(/```json\r?\n([\s\S]*?)```/g)].map((m) => m[1])
   const block = blocks.find((b) => b.includes('"permissions"'))
