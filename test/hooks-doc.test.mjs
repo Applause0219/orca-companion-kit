@@ -43,6 +43,21 @@ test('it keeps the four safety notes', () => {
   assert.match(doc, /\(https:\/\/github\.com\/anthropics\/claude-code\/blob\/main\/CHANGELOG\.md\)/)
 })
 
+test('the deny example is valid JSON and blocks .env through both Read and Bash', () => {
+  const blocks = [...doc.matchAll(/```json\r?\n([\s\S]*?)```/g)].map((m) => m[1])
+  const block = blocks.find((b) => b.includes('"permissions"'))
+  assert.ok(block, 'no json block with "permissions"')
+  let parsed
+  assert.doesNotThrow(() => { parsed = JSON.parse(block) }, 'the deny example is not valid JSON')
+  const deny = parsed?.permissions?.deny
+  assert.ok(Array.isArray(deny), 'permissions.deny is not an array')
+  for (const tool of ['Read(', 'Bash(']) {
+    const rules = deny.filter((r) => typeof r === 'string' && r.startsWith(tool))
+    assert.ok(rules.length > 0, `no ${tool} rule in permissions.deny`)
+    assert.ok(rules.some((r) => r.includes('.env')), `no ${tool} rule matches .env`)
+  }
+})
+
 test('README links to hooks-to-states.md and it links back to states.md', () => {
   assert.match(read('README.md'), /\(docs\/hooks-to-states\.md\)/)
   assert.match(doc, /\(states\.md\)/)
