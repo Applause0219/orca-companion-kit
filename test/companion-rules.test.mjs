@@ -193,11 +193,60 @@ test('idle: 50 seeded picks never do the same act twice in a row, and each wait 
 
 test('idle: a rounding sliver still picks a new act; the fallback is only for "nothing else allowed"', () => {
   const { idle } = ctx.window.__orcaThemer.companionRules
-  // 0.1 + 0.2 + … leaves r a hair above 0 after the last weight when rand is just under 1.
+  // A draw just under 1 never repeats the last act. (Whether it reaches the last-candidate branch is
+  // checked case by case in the next test.)
   const weights = { a: 0.1, b: 0.2, c: 0.3, sig: 0.4 }
   assert.notEqual(idle.pick(weights, 'sig', () => 0.9999999999999999, 'sig'), 'sig')
   assert.equal(idle.pick({ sig: 1 }, 'sig', Math.random, 'sig'), 'sig') // the only act there is
   assert.equal(idle.pick({}, '', Math.random, 'sig'), 'sig')
+})
+
+test('idle: the rounding sliver really reaches "play the last candidate"', () => {
+  const { idle } = ctx.window.__orcaThemer.companionRules
+  // The same sums pick does, in the same order: the draw scaled by the total, then each weight taken off.
+  // A case only counts if something is still left after the last weight, so the loop ends without a
+  // match and only the closing `return names[names.length - 1]` can answer it.
+  const left = (w, x) => {
+    let r = x * Object.values(w).reduce((a, v) => a + v, 0)
+    for (const v of Object.values(w)) r -= v
+    return r
+  }
+  const draws = [1 - Number.EPSILON, 1 - Number.EPSILON / 2]
+  // 0.1 / 0.2 / 0.3 and their kin look like they should leave a sliver, but they end on exactly 0 (the
+  // loop's own `<= 0` catches them). The sure case: one big weight and a few just over half its ulp,
+  // so every add rounds up and the total overshoots by more than the draw takes off.
+  const k = 0.6 * Number.EPSILON
+  const sure = [1, k, k, k]
+  const sets = [sure, [0.1, 0.2, 0.3], [0.3, 0.2, 0.1], [0.1, 0.7, 0.2]]
+  for (const x of draws) assert.ok(left(Object.fromEntries(sure.map((v, i) => [`a${i}`, v])), x) > 0, `the sure case @ ${x}`)
+  for (let n = 2; n <= 12; n++) sets.push(Array(n).fill(0.1), Array.from({ length: n }, (_, i) => (i + 1) / 10))
+  let reached = 0
+  for (const vals of sets) {
+    const weights = Object.fromEntries(vals.map((v, i) => [`a${i}`, v]))
+    const names = Object.keys(weights)
+    for (const x of draws) {
+      if (!(left(weights, x) > 0)) continue
+      reached++
+      const before = names[0]
+      const rest = Object.fromEntries(Object.entries(weights).filter(([n]) => n !== before))
+      // With the act it just did still in the table: it is skipped, and the last of the others plays.
+      const act = idle.pick({ ...weights, sig: 0.4 }, before, () => x, 'sig')
+      if (left({ ...rest, sig: 0.4 }, x) > 0) assert.equal(act, 'sig', `${vals} @ ${x}`)
+      assert.notEqual(act, before)
+      // And with nothing skipped: the very last weight answers, never the fallback.
+      assert.equal(idle.pick(weights, '', () => x, 'fallback'), names.at(-1), `${vals} @ ${x}`)
+    }
+  }
+  assert.ok(reached > 0, 'no weight set left a sliver, so the last-candidate branch went untested')
+})
+
+test('idle: when only the signature act may play, it plays', () => {
+  const { idle } = ctx.window.__orcaThemer.companionRules
+  // Every other act switched off (weight 0): the signature is the one name left and the draw lands on it.
+  assert.equal(idle.pick({ hop: 0, look: 0, sig: 1 }, 'hop', () => 0.5, 'sig'), 'sig')
+  assert.equal(idle.pick({ hop: 0, look: 0, sig: 1 }, 'hop', () => 1 - Number.EPSILON, 'sig'), 'sig')
+  // It just played and nothing else is on: the fallback brings it back rather than leaving the pet still.
+  assert.equal(idle.pick({ hop: 0, sig: 1 }, 'sig', () => 0.5, 'sig'), 'sig')
 })
 
 // A fake label and log, to count what the trace makes and writes.
