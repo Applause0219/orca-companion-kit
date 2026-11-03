@@ -15,6 +15,37 @@
 
 `mode` 一律用 `setMode(新狀態, 原因)` 改，不要直接設值（測試會擋）。抓狀態亂跳的問題時，到設定面板「你和牠」打開「開發：顯示狀態」（`debugState`，預設關）：牠頭上會顯示現在的 `mode`，每次轉換在主控台用 `console.debug` 記一行「舊→新（原因）」（DevTools 要把 Verbose 打開才看得到）。關著的時候不會產生任何元素，也不會記任何東西。
 
+### 每一次換 `mode`
+
+下表是引擎裡全部的 `setMode` 呼叫，「原因」就是主控台那一行括號裡的字。舊狀態是照程式的條件推出來的：那一行執行時 `mode` 應該是什麼。一個呼叫有兩種原因（`條件 ? 'A' : 'B'`）就拆成兩行。測試會從 `companion.js` 掃出每個 `setMode('新', '原因')`，檢查原因是不空的字串、有出現在這張表、而且新狀態對得上；新增或改了原因，這裡也要跟著改。
+
+| 舊 → 新 | 原因 | 在哪個函式 |
+| --- | --- | --- |
+| `home` → `visiting` | 有分頁在等你 | `visit` |
+| `visiting` → `flying` | 不用敲門了，飛回家 | `leaveVisit` |
+| `flying` → `home` | 敲完門回到家 | `leaveVisit` |
+| `home` → `asleep` | 一陣子沒動靜 | `sleep` |
+| `home` → `asleep` | 試試看睡覺 | `sleep` |
+| `asleep` → `home` | 醒來 | `wake` |
+| `home` → `flying` | 被甩出去 | `throwIt` |
+| `flying` → `home` | 落地飛回家 | `throwIt` |
+| `visiting` → `home` | 敲門時被拖走 | `onMove` |
+| `home` → `flying` | 放下，不能搬家 | `onUp` |
+| `flying` → `home` | 飛回家 | `onUp` |
+| `following` → `home` | 不跟了 | `stopFollow` |
+| `home` → `following` | 雙擊，跟著游標 | `toggleFollow` |
+| `hiding` → `home` | 捉迷藏中斷 | `endSeek` |
+| `hiding` → `flying` | 被找到了 | `comeHome` |
+| `hiding` → `flying` | 沒被找到，時間到 | `comeHome` |
+| `flying` → `home` | 捉迷藏結束回到家 | `comeHome` |
+| `home` → `hiding` | 開始捉迷藏 | `hide` |
+| `home` → `hiding` | 試試看捉迷藏 | `hide` |
+| `visiting` → `home` | 試試看前清乾淨 | `ready` |
+| `home` → `flying` | 試試看拖曳 | `previews.drag` |
+| `flying` → `home` | 試試看拖曳結束 | `previews.drag` |
+
+幾個不容易從表上看出來的地方：`wake` 和 `hide` 會先叫醒，所以從 `asleep` 開始跟著走或捉迷藏，記下來的是兩行（`asleep` → `home` 再 `home` → 新的）；拖動 `asleep` 時按下去就先醒來，拖動 `visiting` 時一開始移動就記「敲門時被拖走」，所以 `throwIt`、`onUp` 的舊狀態都是 `home`。「試試看」系列都先經過 `ready()` 清乾淨，舊狀態也是 `home`。
+
 ## 四層與優先順序
 
 數字大的可以打斷數字小的，反過來不行。
