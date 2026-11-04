@@ -346,13 +346,25 @@
   // Dev aid (settings row debugState, off by default; docs/states.md): the current `mode` over its head
   // and one console.debug line per change, "old→new（why）". `isOn()` is read at every call; while it is
   // off nothing is made and nothing is logged. `make()` builds the label (the engine's DOM), `log` writes.
-  function stateTrace(isOn, { make, log }) {
+  // The label hangs in the layer beside the pet, not inside it: hiding clips the pet and fades it, a throw
+  // turns it, and those are the times the state matters most. `at()` gives the label's transform (a
+  // translate only, from where the pet is); `follow(ms)` moves it there, gliding when the pet glides.
+  function stateTrace(isOn, { make, log, at = () => '' }) {
     let tag = null
+    let glide = null
     const drop = () => {
+      glide?.cancel()
+      glide = null
       tag?.remove()
       tag = null
     }
-    const show = (now) => ((tag ??= make()).textContent = now)
+    const show = (now) => {
+      if (!tag) {
+        tag = make()
+        tag.style.transform = at()
+      }
+      tag.textContent = now
+    }
     return {
       change(from, to, why) {
         if (from === to) return
@@ -364,6 +376,16 @@
       sync(now) {
         if (isOn()) show(now)
         else drop()
+      },
+      // The pet moved (or will glide there over `ms`): the label follows by transform alone.
+      follow(ms = 0, easing) {
+        if (!tag) return
+        const from = tag.style.transform
+        const to = at()
+        glide?.cancel()
+        glide = null
+        tag.style.transform = to
+        if (ms > 0 && from && from !== to) glide = tag.animate([{ transform: from }, { transform: to }], { duration: ms, easing })
       },
       stop: drop
     }
@@ -856,9 +878,29 @@
       const bar = document.querySelector('.bg-worktree-sidebar[data-os-file-drop-owner]')?.getBoundingClientRect()
       return bar && bar.width > 140 ? clamp({ x: bar.right - BOX - 20, y: bar.bottom - BOX - 48 }) : clamp({ x: 18, y: innerHeight - BOX - 46 })
     }
-    const place = (p, tilt = 0) => {
+    // Every change of `mode` goes through setMode (below), so the debugState row can show and log it. The
+    // label sits in the layer, over the middle of the pet's top edge, kept inside the window (a hiding
+    // spot is half off it); it only ever moves by translate, so the pet's turn, clip and fade skip it.
+    const trace = T.companionRules.stateTrace(() => on('debugState'), {
+      make: () => {
+        const el = document.createElement('div')
+        el.dataset.companionState = id
+        el.style.cssText = 'position:absolute;left:0;top:0;padding:1px 5px;border-radius:4px;background:rgb(0 0 0 / .65);color:#fff;font:600 10px/1.4 ui-monospace,monospace;white-space:nowrap;pointer-events:none;will-change:transform'
+        host.appendChild(el)
+        return el
+      },
+      at: () => {
+        const x = Math.min(Math.max(spot.x + HALF, 40), innerWidth - 40)
+        const y = Math.min(Math.max(spot.y + HALF - HALF * size - 4, 20), innerHeight - 4)
+        return `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -100%)`
+      },
+      log: (line) => console.debug(`[companion ${id}] ${line}`)
+    })
+    const FLY_EASE = 'cubic-bezier(.45,.05,.3,1)'
+    const place = (p, tilt = 0, ms = 0) => {
       spot = p
       home.style.transform = `translate(${p.x}px, ${p.y}px)` + (tilt ? ` rotate(${tilt}deg)` : '') + (size !== 1 ? ` scale(${size})` : '')
+      trace.follow(ms, FLY_EASE)
     }
     const saveSpot = () => {
       saved = { fx: spot.x / innerWidth, fy: spot.y / innerHeight }
@@ -866,8 +908,8 @@
     }
     const flyTo = (p, ms = 700) => {
       const from = home.style.transform
-      place(p)
-      return home.animate([{ transform: from }, { transform: home.style.transform }], { duration: ms, easing: 'cubic-bezier(.45,.05,.3,1)' }).finished.catch(() => {})
+      place(p, 0, ms)
+      return home.animate([{ transform: from }, { transform: home.style.transform }], { duration: ms, easing: FLY_EASE }).finished.catch(() => {})
     }
     place(homeSpot())
 
@@ -886,17 +928,6 @@
 
     let stopped = false // late timers check this after stop()
     let mode = 'home' // home | asleep | flying | following | visiting | hiding
-    // Every change of `mode` goes through here, so the debugState row can show and log it.
-    const trace = T.companionRules.stateTrace(() => on('debugState'), {
-      make: () => {
-        const el = document.createElement('div')
-        el.dataset.companionState = ''
-        el.style.cssText = 'position:absolute;left:50%;bottom:100%;transform:translate(-50%,-4px);padding:1px 5px;border-radius:4px;background:rgb(0 0 0 / .65);color:#fff;font:600 10px/1.4 ui-monospace,monospace;white-space:nowrap;pointer-events:none'
-        home.appendChild(el)
-        return el
-      },
-      log: (line) => console.debug(`[companion ${id}] ${line}`)
-    })
     const setMode = (to, why) => {
       const from = mode
       mode = to
@@ -2495,6 +2526,7 @@
       spot = { x: s.x - HALF, y: s.y - HALF }
       home.style.clipPath = CLIP
       home.style.transform = `translate(${spot.x}px, ${spot.y}px) rotate(${SEEK.ROT[s.dir]}deg)` + (size !== 1 ? ` scale(${size})` : '')
+      trace.follow() // the label stays in the window above the spot, unclipped and upright
       seek.pose?.cancel()
       seek.pose = null
       loops[0].pause() // the idle bob would move it in and out of the edge

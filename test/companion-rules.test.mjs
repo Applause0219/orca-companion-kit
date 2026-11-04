@@ -250,18 +250,31 @@ test('idle: when only the signature act may play, it plays', () => {
 })
 
 // A fake label and log, to count what the trace makes and writes.
-const traceWith = (on) => {
+// `where` is the pet's spot, as the engine's `at()` would read it.
+const traceWith = (on, where = { x: 100, y: 200 }) => {
   const made = []
   const lines = []
   const tr = stateTrace(() => on.value, {
     make: () => {
-      const el = { textContent: '', removed: false, remove() { this.removed = true } }
+      const el = {
+        textContent: '',
+        removed: false,
+        style: { transform: '' },
+        glides: [],
+        remove() { this.removed = true },
+        animate(frames, opts) {
+          const a = { frames, opts, cancelled: false, cancel() { this.cancelled = true } }
+          this.glides.push(a)
+          return a
+        }
+      }
       made.push(el)
       return el
     },
+    at: () => `translate(${where.x}px, ${where.y}px) translate(-50%, -100%)`,
     log: (line) => lines.push(line)
   })
-  return { tr, made, lines }
+  return { tr, made, lines, where }
 }
 
 test('debugState: switched off, a change makes no label and logs nothing', () => {
@@ -298,6 +311,55 @@ test('debugState: switched on, the label shows the state and each change logs "o
   assert.equal(made[1].textContent, 'asleep')
   tr.stop()
   assert.equal(made[1].removed, true)
+})
+
+test('debugState: while hiding and flying the label is still there and moves by translate alone', () => {
+  const on = { value: true }
+  const { tr, made, where } = traceWith(on)
+  tr.change('home', 'hiding', '開始捉迷藏')
+  where.x = 0 // off to a hiding spot
+  tr.follow()
+  assert.equal(made.length, 1)
+  assert.equal(made[0].removed, false, 'hiding keeps the label')
+  assert.equal(made[0].textContent, 'hiding')
+  assert.equal(made[0].style.transform, 'translate(0px, 200px) translate(-50%, -100%)')
+  tr.change('hiding', 'flying', '被找到了')
+  where.x = 300
+  tr.follow(900, 'ease') // flyTo: the label glides with the pet
+  assert.equal(made.length, 1)
+  assert.equal(made[0].removed, false, 'flying keeps the label')
+  assert.equal(made[0].textContent, 'flying')
+  assert.equal(made[0].glides.length, 1)
+  assert.deepEqual(Array.from(made[0].glides[0].frames, (f) => f.transform), ['translate(0px, 200px) translate(-50%, -100%)', 'translate(300px, 200px) translate(-50%, -100%)'])
+  assert.equal(made[0].glides[0].opts.duration, 900)
+  for (const f of [made[0].style.transform, ...made[0].glides[0].frames.map((x) => x.transform)]) assert.doesNotMatch(f, /rotate|scale/)
+  // A throw places it every frame: the old glide gives way.
+  where.y = 50
+  tr.follow()
+  assert.equal(made[0].glides[0].cancelled, true)
+  assert.equal(made[0].glides.length, 1)
+  assert.equal(made[0].style.transform, 'translate(300px, 50px) translate(-50%, -100%)')
+})
+
+test('debugState: switched off, following the pet makes no label', () => {
+  const on = { value: false }
+  const { tr, made } = traceWith(on)
+  tr.change('home', 'hiding', '開始捉迷藏')
+  tr.follow()
+  tr.change('hiding', 'flying', '被找到了')
+  tr.follow(900, 'ease')
+  assert.equal(made.length, 0)
+})
+
+test('debugState: the engine hangs the label in the layer, not in the pet, and moves it with the pet', () => {
+  const src = fs.readFileSync(path.join(REPO, 'src', 'touches', 'companion.js'), 'utf8')
+  const make = src.match(/stateTrace\(\(\) => on\('debugState'\), \{[\s\S]*?\r?\n {4}\}\)/)?.[0]
+  assert.ok(make, 'the engine builds the trace')
+  assert.match(make, /host\.appendChild\(el\)/, 'beside the pet: its clip, fade and turn do not reach the label')
+  assert.doesNotMatch(make, /home\.appendChild/)
+  assert.doesNotMatch(make, /rotate|scale\(|opacity|clip/)
+  assert.match(src, /const place = [^\n]*\n[^\n]*\n[^\n]*\n\s*trace\.follow\(/, 'every place moves the label')
+  assert.match(src, /home\.style\.clipPath = CLIP\r?\n[^\n]*\n\s*trace\.follow\(\)/, 'so does a hiding spot')
 })
 
 test('debugState: every change of mode in the engine goes through setMode, and the row is off by default', () => {
