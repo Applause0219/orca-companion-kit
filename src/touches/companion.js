@@ -403,7 +403,11 @@
       for (const n of names) if ((r -= weights[n]) <= 0) return n
       return names[names.length - 1]
     },
-    delay: ([min, max], freq, rand) => (min + rand() * (max - min)) / freq
+    delay: ([min, max], freq, rand) => (min + rand() * (max - min)) / freq,
+    // Focus quiet (cfg.focusQuietMs, off when 0 or unset): a key pressed within the last `quietMs` means
+    // you are typing, so idle acts wait and agent cues change only colour or glow. `lastKey` and `now` are
+    // performance.now() in the engine and a fake clock in the tests.
+    focused: (lastKey, now, quietMs) => quietMs > 0 && now - lastKey < quietMs
   }
   T.companionRules = { seek: SEEK, gitMoment, isReadable, lanternPhase, defaultWords: DEFAULT_WORDS, openTab, frontTab, goToTab, missing, stateTrace, idle: idleRules }
 
@@ -1475,11 +1479,21 @@
       }
       return idleRules.pick(weights, lastAct, Math.random, signatureName)
     }
+    // Focus quiet (docs/states.md「專注時只換顏色」): any key within the last focusQuietMs holds back the
+    // idle acts and turns the agent cues into colour only. Off (no listener at all) unless the pet sets it.
+    const focusQuietMs = Math.max(0, Number(cfg.focusQuietMs) || 0)
+    let lastKeyAt = -Infinity
+    const onFocusKey = () => (lastKeyAt = performance.now())
+    const focused = () => idleRules.focused(lastKeyAt, performance.now(), focusQuietMs)
+    if (focusQuietMs) {
+      addEventListener('keydown', onFocusKey, { capture: true, passive: true })
+      addEventListener('compositionupdate', onFocusKey, { capture: true, passive: true })
+    }
     const [idleMin, idleMax] = cfg.idleEvery ?? [12000, 30000]
     let idleTimer = 0
     const scheduleIdle = () => {
       idleTimer = setTimeout(() => {
-        if (!document.hidden && mode === 'home' && !busy && !drag && on('idle')) {
+        if (!document.hidden && mode === 'home' && !busy && !drag && on('idle') && !focused()) {
           lastAct = pickAct()
           const feeling = topMood()
           if (feeling && lastAct !== 'sigh' && on('mood') && Math.random() < 0.4) emote(feeling)
@@ -1704,7 +1718,7 @@
         () => glow.animate([{ opacity: glow.style.opacity }, { opacity: baseGlow }], { duration: 900 }).finished.then(() => (glow.style.opacity = String(baseGlow))).catch(() => {}),
         1600
       )
-      if (n % 50 === 0) twirl()
+      if (n % 50 === 0 && !focused()) twirl() // while you type in focus quiet the brighter glow is the cue
     }
     addEventListener('orca-themer:combo', onCombo)
 
@@ -1717,7 +1731,7 @@
           const toast = n.matches?.('[data-sonner-toast]') ? n : n.querySelector?.('[data-sonner-toast]')
           if (toast && !seenToasts.has(toast)) {
             seenToasts.add(toast)
-            if (on('toast')) twirl()
+            if (on('toast')) focused() ? flash() : twirl()
           }
         }
     })
@@ -1737,14 +1751,15 @@
     // compositor after each (see keepComposited).
     keepComposited(glow, () => (vigil?.effect ? vigil : null), (a) => (vigil = a))
     // Something failed: it visibly sags for a couple of seconds (head down, body squashed, ears flat, the
-    // fluttering part folded, glow out), then slowly picks itself back up. Reduced motion keeps only the dim.
-    const droop = () => {
+    // fluttering part folded, glow out), then slowly picks itself back up. Reduced motion, and `still` (focus
+    // quiet while you type), keep only the dim and the「!?」.
+    const droop = (still = false) => {
       if (mode !== 'home') return
       // Big enough to read at 64 px: it sinks a third of its height, tips over, the ears fold flat and the
       // wool deflates; each transform plays in its own box (stacked), so all of it stays on the compositor.
       const D = 3200
       const sag = (from, to) => [from, { ...to, offset: 0.16 }, { ...to, offset: 0.74 }, from]
-      if (!T.reducedMotion?.()) {
+      if (!T.reducedMotion?.() && !still) {
         bob.animate(sag({ transform: 'translateY(0)' }, { transform: `translateY(${BOX * 0.32}px) rotate(-18deg) scale(.9,.76)` }), { duration: D, easing: 'cubic-bezier(.3,.7,.3,1)', composite: 'add' })
         animateParts('ears', sag({ transform: 'scaleY(1) rotate(0deg)' }, { transform: 'scaleY(.35) rotate(14deg)' }), { duration: D, easing: 'ease-out', composite: 'add' })
         animateParts('flutter', sag({ transform: 'scale(1)' }, { transform: 'scale(.5,.6)' }), { duration: D, easing: 'ease-out', composite: 'add' })
@@ -1752,6 +1767,13 @@
       bob.animate(sag({ opacity: 1 }, { opacity: 0.45 }), { duration: D, easing: 'ease-out' })
       if (glowColor) glow.animate(sag({ opacity: baseGlow }, { opacity: 0 }), { duration: D, easing: 'ease-out' })
       later(300, () => emote('worried'))
+    }
+    // Focus quiet's stand-in for a twirl: the glow brightens once and settles, nothing moves. A pet without
+    // a glow gets the happy sign instead, so the cue is not colour alone.
+    const flash = () => {
+      if (mode !== 'home') return
+      if (!glowColor) return emote('happy')
+      glow.animate([{ opacity: baseGlow }, { opacity: 1, offset: 0.25 }, { opacity: baseGlow }], { duration: 1400, easing: 'ease-out' })
     }
     let visitingTab = null
     let knock = null
@@ -1807,8 +1829,19 @@
         saveBond()
         applyFeelings()
       }
-      if (finished && on('done')) twirl(), feel('happy', 0.2), later(900, () => say(pick(L.done)))
-      if (failed && on('droop')) droop(), feel('worried', 0.45), later(900, () => say(pick(L.failed)))
+      // Focus quiet: while you type the cue is colour or glow only (a flash, the dim), no move and no line.
+      const still = focused()
+      if (finished && on('done')) {
+        if (still) flash()
+        else twirl()
+        feel('happy', 0.2)
+        if (!still) later(900, () => say(pick(L.done)))
+      }
+      if (failed && on('droop')) {
+        droop(still)
+        feel('worried', 0.45)
+        if (!still) later(900, () => say(pick(L.failed)))
+      }
       if (Date.now() < knockHold) return // a preview knocks on a tab that does not wait for you
       const want = on('knock') ? waiting : null
       if (want !== visitingTab) visit(want)
@@ -3332,6 +3365,8 @@
       removeEventListener('compositionupdate', onTypeSway, { capture: true })
       removeEventListener('keydown', onTypedChar, { capture: true })
       removeEventListener('compositionend', onTypedIme, { capture: true })
+      removeEventListener('keydown', onFocusKey, { capture: true })
+      removeEventListener('compositionupdate', onFocusKey, { capture: true })
       removeEventListener('keydown', hushAudio, true)
       removeEventListener('pointerdown', hushAudio, true)
       document.removeEventListener('visibilitychange', hushAudio)

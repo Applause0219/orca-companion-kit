@@ -84,6 +84,7 @@
 | `milestones` | number[] | 要慶祝的天數，預設 `[7, 30, 100, 200, 365, 500, 1000]` |
 | `emotes` | object | 新增或覆蓋頭上冒出的符號：`{ happy: ['♡', '#f6b3c8'] }`。內建：`happy`、`curious`、`bored`、`sleepy`、`worried`、`surprised`、`giggle`（躲著偷笑）、`smug`（沒被找到）、`blush`（被抓包） |
 | `idleEvery` | `[min, max]` ms | 閒置動作的間隔，預設 `[12000, 30000]`；想要 8–15 秒就寫 `[8000, 15000]`，和頻率怎麼相乘見下方[閒置間隔](#閒置間隔-idleevery) |
+| `focusQuietMs` | ms | 專注安靜模式，預設關（`0` 或不寫）：最近這麼多毫秒內按過鍵，就暫停閒置動作，agent 的提示只換顏色或光暈、不播動作。例如 `8000`；細節見 [states.md](states.md#專注時只換顏色) |
 | `sleepAfter` | ms | 多久沒操作就睡著，預設白天 90 秒、晚上 120 秒 |
 | `welcomeAfter` | ms | 離開多久回來才算「歡迎回來」，預設 10 分鐘 |
 | `sing` | `{ asset, start, length, volume }` | 唱歌時放的音檔：`asset` 是 `~/.orca/themer/assets/<主題 id>/` 裡的檔名（不含副檔名），`start` 從第幾秒開始、`length` 放幾秒（預設 20）、`volume` 0–1（預設 0.35）。沒設或找不到檔案就只冒音符 |

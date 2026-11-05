@@ -191,6 +191,35 @@ test('idle: 50 seeded picks never do the same act twice in a row, and each wait 
   }
 })
 
+test('idle: focus quiet holds the idle acts while you type and lets them back after quietMs (fake clock)', () => {
+  const { idle } = ctx.window.__orcaThemer.companionRules
+  // The engine's idle loop on a fake clock: each tick waits idle.delay, and acts only when not focused.
+  // You type a key every 180 ms for the first 90 s, then stop.
+  const run = (quietMs, range = [8000, 15000]) => {
+    const rand = seeded(5)
+    const typedUntil = 90000
+    const lastKeyAt = (now) => (now < typedUntil ? now - (now % 180) : typedUntil - (typedUntil % 180))
+    const acted = []
+    for (let now = idle.delay(range, 1, rand); now < 180000; now += idle.delay(range, 1, rand)) {
+      if (!idle.focused(lastKeyAt(now), now, quietMs)) acted.push(now)
+    }
+    return { acted, stoppedAt: lastKeyAt(typedUntil) }
+  }
+  // Off (0, or unset in the engine): it acts while you type, as before.
+  assert.ok(run(0).acted.some((t) => t < 90000))
+  for (const quietMs of [3000, 8000, 20000]) {
+    const { acted, stoppedAt } = run(quietMs)
+    assert.ok(acted.length, `${quietMs}: never came back`)
+    for (const t of acted) assert.ok(t >= stoppedAt + quietMs, `${quietMs}: acted at ${t} ms, ${t - stoppedAt} ms after the last key`)
+    // Back within one idle wait (max 15 s) of the quiet running out.
+    assert.ok(acted[0] <= stoppedAt + quietMs + 15000, `${quietMs}: first act only at ${acted[0]}`)
+  }
+  // The edge: exactly quietMs after the last key is no longer focused; no key yet is never focused.
+  assert.equal(idle.focused(1000, 1000 + 7999, 8000), true)
+  assert.equal(idle.focused(1000, 1000 + 8000, 8000), false)
+  assert.equal(idle.focused(-Infinity, 5, 8000), false)
+})
+
 test('idle: a rounding sliver still picks a new act; the fallback is only for "nothing else allowed"', () => {
   const { idle } = ctx.window.__orcaThemer.companionRules
   // A draw just under 1 never repeats the last act. (Whether it reaches the last-candidate branch is
