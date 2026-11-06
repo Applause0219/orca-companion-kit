@@ -407,7 +407,14 @@
     // Focus quiet (cfg.focusQuietMs, off when 0 or unset): a key pressed within the last `quietMs` means
     // you are typing, so idle acts wait and agent cues change only colour or glow. `lastKey` and `now` are
     // performance.now() in the engine and a fake clock in the tests.
-    focused: (lastKey, now, quietMs) => quietMs > 0 && now - lastKey < quietMs
+    focused: (lastKey, now, quietMs) => quietMs > 0 && now - lastKey < quietMs,
+    // Hidden window (docs/states.md): pause every looping animation that is running and hand back the ones
+    // it paused; `resume` plays only those again, so a loop paused on purpose (the bob while hiding) stays
+    // paused, and one something else already restarted or cancelled is left alone.
+    pause: (anims) => anims.filter((a) => a?.playState === 'running').map((a) => (a.pause(), a)),
+    resume: (paused) => {
+      for (const a of paused) if (a.playState === 'paused') a.play()
+    }
   }
   T.companionRules = { seek: SEEK, gitMoment, isReadable, lanternPhase, defaultWords: DEFAULT_WORDS, openTab, frontTab, goToTab, missing, stateTrace, idle: idleRules }
 
@@ -1506,6 +1513,28 @@
       }, idleRules.delay([idleMin, idleMax], freq('idle'), Math.random))
     }
     scheduleIdle()
+
+    // ---------- out of sight: the loops pause and the idle timer stops ----------
+    // Hidden (minimised, another app over a full-screen Orca), nothing it does can be seen: the looping
+    // bob/flutter/ears pause and no idle pick is scheduled. Visible again, the loops play from where they
+    // were (then get their composited copy back, see keepComposited) and the idle timer starts afresh.
+    let pausedLoops = []
+    const onVisibility = () => {
+      if (stopped) return
+      if (document.hidden) {
+        pausedLoops = pausedLoops.concat(idleRules.pause(loops))
+        clearTimeout(idleTimer)
+        idleTimer = 0
+        return
+      }
+      idleRules.resume(pausedLoops)
+      pausedLoops = []
+      requestAnimationFrame(() => seats.forEach(reseat))
+      clearTimeout(idleTimer)
+      scheduleIdle()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    if (document.hidden) onVisibility() // started in a window nobody can see yet
 
     // ---------- blinking ----------
     let blinkTimer = 0
@@ -3358,6 +3387,7 @@
       removeEventListener('blur', onLeave)
       removeEventListener('focus', onBack)
       document.removeEventListener('visibilitychange', onBack)
+      document.removeEventListener('visibilitychange', onVisibility)
       removeEventListener('pointermove', onFollowMove, true)
       removeEventListener('contextmenu', onRightFollow, true)
       removeEventListener('pointermove', onPointer, { capture: true })

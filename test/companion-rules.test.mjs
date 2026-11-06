@@ -278,6 +278,44 @@ test('idle: when only the signature act may play, it plays', () => {
   assert.equal(idle.pick({ hop: 0, sig: 1 }, 'sig', () => 0.5, 'sig'), 'sig')
 })
 
+test('hidden: going hidden pauses the running loops, coming back plays only those', () => {
+  const { idle } = ctx.window.__orcaThemer.companionRules
+  const anim = (playState) => ({
+    playState,
+    pause() {
+      this.playState = 'paused'
+    },
+    play() {
+      this.playState = 'running'
+    }
+  })
+  const bob = anim('running')
+  const ears = anim('running')
+  const held = anim('paused') // paused on purpose (the bob while hiding)
+  const gone = anim('idle') // cancelled
+  const paused = idle.pause([bob, ears, held, gone, undefined])
+  assert.deepEqual(paused, [bob, ears])
+  assert.deepEqual([bob, ears, held, gone].map((a) => a.playState), ['paused', 'paused', 'paused', 'idle'])
+  // Hidden twice in a row: nothing more to pause.
+  assert.deepEqual(idle.pause([bob, ears, held]), [])
+  // Something cancelled one while hidden: it is not brought back.
+  ears.playState = 'idle'
+  idle.resume(paused)
+  assert.deepEqual([bob, ears, held, gone].map((a) => a.playState), ['running', 'idle', 'paused', 'idle'])
+})
+
+test('hidden: the engine pauses loops and stops the idle timer on visibilitychange, and lets go on stop', () => {
+  const src = fs.readFileSync(path.join(REPO, 'src', 'touches', 'companion.js'), 'utf8')
+  assert.match(src, /document\.addEventListener\('visibilitychange', onVisibility\)/)
+  assert.match(src, /document\.removeEventListener\('visibilitychange', onVisibility\)/)
+  const body = src.split('const onVisibility = () => {')[1]?.split('\n    }\n')[0] ?? ''
+  assert.match(body, /document\.hidden/)
+  assert.match(body, /idleRules\.pause\(loops\)/)
+  assert.match(body, /clearTimeout\(idleTimer\)/)
+  assert.match(body, /idleRules\.resume\(pausedLoops\)/)
+  assert.match(body, /scheduleIdle\(\)/)
+})
+
 // A fake label and log, to count what the trace makes and writes.
 // `where` is the pet's spot, as the engine's `at()` would read it.
 const traceWith = (on, where = { x: 100, y: 200 }) => {
