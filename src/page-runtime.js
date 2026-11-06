@@ -390,6 +390,13 @@
 
   matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', () => syncTouches())
 
+  // Why: a background window's timers are throttled, so a sheet lost while hidden may not be restored by
+  // the time it is shown again. On becoming visible, put the theme back once, only if our <style> is gone.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible' || !css || document.getElementById(STYLE_ID)) return
+    reapplyTheme()
+  })
+
   window.__orcaThemer = {
     apply,
     openPicker,

@@ -76,15 +76,22 @@ function freshWindow(media = { matches: false, addEventListener() {} }, { loaded
   const sent = []
   const listeners = []
   const observers = []
+  const docListeners = {}
+  let created = 0
   const document = {
     documentElement: html,
     head,
     body,
-    createElement: element,
+    visibilityState: 'visible',
+    createElement: (tag) => {
+      if (tag === 'style') created++
+      return element(tag)
+    },
     getElementById: (id) => all(html).find((n) => n.id === id) ?? null,
     querySelector: (sel) => (sel === 'meta[name="color-scheme"]' ? all(html).find((n) => n.tagName === 'meta' && n.attributes.name === 'color-scheme') ?? null : null),
     addEventListener(type, fn) {
       if (type === 'DOMContentLoaded' && !loaded) fn()
+      else (docListeners[type] ??= []).push(fn)
     }
   }
   const win = {
@@ -131,7 +138,13 @@ function freshWindow(media = { matches: false, addEventListener() {} }, { loaded
     mutate: () => {
       for (const o of observers) if (o.targets.length) o.fn([])
     },
-    themeStyles: () => all(html).filter((n) => n.id === 'orca-themer-style')
+    themeStyles: () => all(html).filter((n) => n.id === 'orca-themer-style'),
+    // The window goes to the background or comes back, as the browser reports it.
+    setVisibility: (state) => {
+      document.visibilityState = state
+      for (const fn of docListeners.visibilitychange ?? []) fn()
+    },
+    stylesCreated: () => created
   }
 }
 
@@ -230,6 +243,43 @@ test('color scheme: unrelated mutations do not re-add the theme <style>, and the
   meta.setAttribute('content', 'light')
   w.mutate()
   for (const s of w.themeStyles()) assert.equal(s.textContent, '', 'no theme rules come back after the theme was turned off')
+})
+
+// A background window's timers are throttled, so a sheet lost while hidden is put back the moment the
+// window is shown again: once, and only when it is actually gone.
+test('visibility: hidden -> visible with the theme <style> cleared puts it back exactly once', () => {
+  const w = freshWindow()
+  w.inject()
+  w.win.__orcaThemer.apply(payload(':root{--background:#000}'))
+  w.setVisibility('hidden')
+  w.themeStyles()[0].remove() // lost while in the background
+  const before = w.stylesCreated()
+  w.setVisibility('hidden') // still hidden: nothing to do yet
+  assert.equal(w.themeStyles().length, 0)
+  w.setVisibility('visible')
+  const styles = w.themeStyles()
+  assert.equal(styles.length, 1, 'the theme is back, once')
+  assert.equal(styles[0].textContent, ':root{--background:#000}')
+  assert.equal(w.win.document.head.lastElementChild, styles[0])
+  assert.equal(w.stylesCreated() - before, 1, 'applied a single time')
+  w.setVisibility('visible') // already there: left alone
+  assert.deepEqual(w.themeStyles(), styles)
+  assert.equal(w.stylesCreated() - before, 1)
+})
+
+test('visibility: coming back with the theme <style> intact, or with no theme, adds nothing', () => {
+  const w = freshWindow()
+  w.inject()
+  w.setVisibility('hidden')
+  w.setVisibility('visible')
+  assert.equal(w.themeStyles().length, 0, 'no theme applied yet: nothing to restore')
+  w.win.__orcaThemer.apply(payload('a{}'))
+  const sheet = w.themeStyles()[0]
+  const before = w.stylesCreated()
+  w.setVisibility('hidden')
+  w.setVisibility('visible')
+  assert.deepEqual(w.themeStyles(), [sheet])
+  assert.equal(w.stylesCreated(), before)
 })
 
 test('reinject: a reload or a new window starts clean and gets the runtime and the theme again', () => {
