@@ -1,6 +1,8 @@
 // Shared helpers for the perf A/B: start an isolated, themed Orca and talk to it over the themer's
-// dev channel (ROOT/dev/*.cmd.json). Only processes this file starts are ever stopped.
+// dev channel (ROOT/dev/*.cmd.json). Only processes this file starts (in this run or an earlier one of these
+// tools that was killed) are ever stopped.
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { spawn, execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -20,6 +22,62 @@ const daemonProfiles = () => {
     return fs.readdirSync(DAEMON_PROFILES)
   } catch {
     return []
+  }
+}
+// A run killed outright (a closed terminal, a low-memory stop) leaves its isolated Orca, the Orca daemon and its
+// ~270 MB profile copy behind. The work folders carry the tool's pid; one whose tool is gone is an orphan, swept
+// once per process before the first launch: what runs with that folder on its command line is stopped, the folder
+// and the daemon profiles those processes ran from are removed.
+export const WORK_RE = /^orca-(perf|live-check)-(\d+)$/
+export const orphanWorks = (names, alive) => names.filter((n) => WORK_RE.test(n) && !alive(Number(n.match(WORK_RE)[2])))
+export const daemonHash = (exe) => (String(exe ?? '').match(/daemon-host-profiles[\\/]([0-9a-f]+)[\\/]/i) ?? [])[1] ?? ''
+const pidAlive = (pid) => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (e) {
+    return e.code === 'EPERM'
+  }
+}
+let swept = false
+export async function sweepOrphans({ temp = process.env.ORCA_PERF_TEMP || os.tmpdir(), log = () => {} } = {}) {
+  if (swept) return
+  swept = true
+  let names = []
+  try {
+    names = fs.readdirSync(temp)
+  } catch {
+    return
+  }
+  for (const n of orphanWorks(names, pidAlive)) {
+    const dir = path.join(temp, n)
+    const needle = dir.replace(/'/g, "''")
+    const script = `Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -and $_.CommandLine.Contains('${needle}') } | ForEach-Object { "$($_.ProcessId)|$($_.ExecutablePath)" }`
+    let left = []
+    try {
+      left = execFileSync('powershell.exe', ['-NoProfile', '-Command', script], { encoding: 'utf8' }).split(/\r?\n/).filter(Boolean)
+    } catch {}
+    const hashes = new Set(left.map((l) => daemonHash(l.split('|')[1])).filter(Boolean))
+    for (const l of left) {
+      try {
+        execFileSync('taskkill.exe', ['/PID', l.split('|')[0], '/T', '/F'], { stdio: 'ignore' })
+      } catch {}
+    }
+    if (left.length) await sleep(1500)
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 })
+    for (const h of hashes) fs.rmSync(path.join(DAEMON_PROFILES, h), { recursive: true, force: true, maxRetries: 5, retryDelay: 500 })
+    log(`orphan ${n}: stopped ${left.length} process(es), removed its folder${hashes.size ? ` and daemon profile ${[...hashes].join(' ')}` : ''}`)
+  }
+}
+// Recursive copy by hand: fs.cpSync(..., { recursive: true }) crashes Node 22 on Windows when a path has
+// non-ASCII characters; copyFileSync does not.
+function copyTree(from, to) {
+  fs.mkdirSync(to, { recursive: true })
+  for (const e of fs.readdirSync(from, { withFileTypes: true })) {
+    const s = path.join(from, e.name)
+    const d = path.join(to, e.name)
+    if (e.isDirectory()) copyTree(s, d)
+    else if (e.isFile()) fs.copyFileSync(s, d)
   }
 }
 // Ctrl+C mid-run still stops the copies it started and removes their profile folders.
@@ -61,8 +119,9 @@ export async function launch({ work, themeId, touches, seedUserData, keep = fals
   fs.mkdirSync(root, { recursive: true })
   // The examples (the Cotton Sky theme, Puff) go into the run's own root, as `npm run example` would.
   seedBundled(root, exampleSources(repo), { restoreDeleted: true })
+  await sweepOrphans({ log: (m) => console.log(`[perf-lib] ${m}`) })
   const profilesBefore = new Set(daemonProfiles())
-  if (seedUserData && !fs.existsSync(ud)) fs.cpSync(seedUserData, ud, { recursive: true })
+  if (seedUserData && !fs.existsSync(ud)) copyTree(seedUserData, ud)
   const all = themeId ? themeTouches(themeId, repo) : []
   fs.writeFileSync(
     path.join(root, 'settings.json'),
