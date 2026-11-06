@@ -414,7 +414,10 @@
     pause: (anims) => anims.filter((a) => a?.playState === 'running').map((a) => (a.pause(), a)),
     resume: (paused) => {
       for (const a of paused) if (a.playState === 'paused') a.play()
-    }
+    },
+    // The blink timer is cleared while hidden. Visible again, it is armed only when no blink timer is
+    // pending (so two visible events never start two) and the pet was not stopped on purpose.
+    rearm: (hidden, timer, stopped) => !hidden && !timer && !stopped
   }
   // Face swap (docs/states.md): the old eyes fade out while the new ones fade in, FADE_MS long, on opacity
   // only, so the face does not jump. Under reduced motion it is a plain switch with no animation at all.
@@ -1542,29 +1545,8 @@
     }
     scheduleIdle()
 
-    // ---------- out of sight: the loops pause and the idle timer stops ----------
-    // Hidden (minimised, another app over a full-screen Orca), nothing it does can be seen: the looping
-    // bob/flutter/ears pause and no idle pick is scheduled. Visible again, the loops play from where they
-    // were (then get their composited copy back, see keepComposited) and the idle timer starts afresh.
-    let pausedLoops = []
-    const onVisibility = () => {
-      if (stopped) return
-      if (document.hidden) {
-        pausedLoops = pausedLoops.concat(idleRules.pause(loops))
-        clearTimeout(idleTimer)
-        idleTimer = 0
-        return
-      }
-      idleRules.resume(pausedLoops)
-      pausedLoops = []
-      requestAnimationFrame(() => seats.forEach(reseat))
-      clearTimeout(idleTimer)
-      scheduleIdle()
-    }
-    document.addEventListener('visibilitychange', onVisibility)
-    if (document.hidden) onVisibility() // started in a window nobody can see yet
-
     // ---------- blinking ----------
+    // The blink switch is read at every tick (settings change live), so the timer keeps going while visible.
     let blinkTimer = 0
     const blink = () => {
       blinkTimer = setTimeout(() => {
@@ -1573,6 +1555,32 @@
       }, 2500 + Math.random() * 4500)
     }
     blink()
+
+    // ---------- out of sight: the loops pause, the idle and blink timers stop ----------
+    // Hidden (minimised, another app over a full-screen Orca), nothing it does can be seen: the looping
+    // bob/flutter/ears pause, and no idle pick or blink is scheduled. Visible again, the loops play from where
+    // they were (then get their composited copy back, see keepComposited), the idle timer starts afresh and
+    // the blink timer is armed once more (unless the pet was stopped, see idleRules.rearm).
+    let pausedLoops = []
+    const onVisibility = () => {
+      if (stopped) return
+      if (document.hidden) {
+        pausedLoops = pausedLoops.concat(idleRules.pause(loops))
+        clearTimeout(idleTimer)
+        idleTimer = 0
+        clearTimeout(blinkTimer)
+        blinkTimer = 0
+        return
+      }
+      idleRules.resume(pausedLoops)
+      pausedLoops = []
+      requestAnimationFrame(() => seats.forEach(reseat))
+      clearTimeout(idleTimer)
+      scheduleIdle()
+      if (idleRules.rearm(document.hidden, blinkTimer, stopped)) blink()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    if (document.hidden) onVisibility() // started in a window nobody can see yet
 
     // ---------- startle: the pointer whips past close by ----------
     let lastPointer = null

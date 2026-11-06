@@ -314,6 +314,20 @@ test('hidden: the engine pauses loops and stops the idle timer on visibilitychan
   assert.match(body, /clearTimeout\(idleTimer\)/)
   assert.match(body, /idleRules\.resume\(pausedLoops\)/)
   assert.match(body, /scheduleIdle\(\)/)
+  // The blink timer stops too, and is armed again on the way back.
+  assert.match(body, /clearTimeout\(blinkTimer\)/)
+  assert.match(body, /blinkTimer = 0/)
+  assert.match(body, /idleRules\.rearm\(document\.hidden, blinkTimer, stopped\)\) blink\(\)/)
+  // Declared before the handler runs for a window that starts hidden.
+  assert.ok(src.indexOf('let blinkTimer = 0') < src.indexOf('const onVisibility = () => {'))
+})
+
+test('hidden: the blink timer is armed again only when visible, not pending and not stopped', () => {
+  const { idle } = ctx.window.__orcaThemer.companionRules
+  assert.equal(idle.rearm(false, 0, false), true) // back in sight after the timer was cleared
+  assert.equal(idle.rearm(true, 0, false), false) // still hidden
+  assert.equal(idle.rearm(false, 42, false), false) // a blink is already pending: never two timers
+  assert.equal(idle.rearm(false, 0, true), false) // stopped on purpose
 })
 
 // A fake label and log, to count what the trace makes and writes.
