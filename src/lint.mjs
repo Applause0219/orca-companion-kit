@@ -52,6 +52,14 @@ export function lintCss(css) {
     issues.push({ level: 'warn', line: lineOf(selectors, m.index), rule: 'fragile-selector', message: `${m[0].slice(0, -1)} breaks when Orca adds or removes an element; ${FRAGILE_HINT}` })
   for (const m of hashedClasses(selectors))
     issues.push({ level: 'warn', line: lineOf(selectors, m.index), rule: 'fragile-selector', message: `.${m[1]} looks like a generated (hashed) class that can change on every Orca build; ${FRAGILE_HINT}` })
+  // 6. Removing the focus ring (docs/theme-checklist.md, 焦點與縮放): keyboard users lose track of where
+  //    they are. Only a warning, and only when the same rule draws nothing else (box-shadow, border) instead.
+  for (const m of src.matchAll(/([^{};]*)\{([^{}]*)\}/g)) {
+    if (!/:focus(?:-visible)?(?![-\w])/.test(m[1])) continue
+    const off = /(?:^|[;\s])outline\s*:\s*(?:none|0(?:px|em|rem)?)\s*(?:!important\s*)?(?:;|$)/.exec(m[2])
+    if (!off || /(?:^|[;\s])(?:box-shadow|border(?:-[\w-]+)?)\s*:/.test(m[2])) continue
+    issues.push({ level: 'warn', line: lineOf(src, m.index + m[1].length + 1 + off.index + off[0].indexOf('outline')), rule: 'focus-outline-removed', message: `outline removed on ${m[1].trim().replace(/\s+/g, ' ')} with nothing in its place (keep the focus ring, or draw one with box-shadow or border); see docs/theme-checklist.md` })
+  }
   return issues
 }
 

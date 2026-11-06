@@ -44,6 +44,7 @@
 - [ ] **Tab 和 Shift+Tab 各走一輪**：從頭 Tab 到底，再用 Shift+Tab 從底走回頭，每一步都要看得到焦點框在哪。
 - [ ] **用真的按鍵測**：實際按鍵盤，不要在 DevTools 裡呼叫 `element.focus()` 代替。`focus()` 不會照 Tab 的順序走，捲動行為也不一樣，蓋住的情況可能測不出來。
 - [ ] **sticky 元素上下兩邊都看**：焦點從 sticky 標頭的下方往上移、和從上方往下移時，都不能被它蓋住。被蓋住時可以給捲動容器加 `scroll-padding-top`（大小約等於標頭高度），別把焦點框拿掉。
+- [ ] **焦點框要看得見**：`:focus`／`:focus-visible` 的規則裡別寫 `outline: none`／`outline: 0`；真的要換樣式，在同一條規則裡用 `box-shadow` 或 `border` 畫一個新的，改了底色之後也要確認它還看得出來。`npm run check` 看到只拿掉 outline、沒有代替的寫法，會出 `focus-outline-removed` 警告（只提醒、不擋）。
 - [ ] **放大到 400% 看一次**：用 Ctrl+加號把畫面放大到 400%（放不到那麼大時，把視窗縮到約 320px 寬，效果差不多），sticky／fixed 的標頭不能佔掉大半個視窗，內容區還要留得下空間讓焦點和文字露出來。
 
 ## Orca 畫面覆蓋

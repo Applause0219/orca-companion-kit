@@ -95,6 +95,21 @@ test('lint: warns (never errors) about fragile selectors and text matching in to
   assert.deepEqual(fragile('// el.textContent === "x" and li:nth-child(2) only in a comment'), [])
 })
 
+test('lint: warns (never errors) when a focus rule removes the outline with nothing in its place', () => {
+  const focus = (css) => lintCss(css).filter((i) => i.rule === 'focus-outline-removed')
+  // outline: none on its own: warned, as a warning, on the line of the declaration.
+  assert.equal(focus('button:focus{outline:none}').length, 1)
+  assert.equal(focus('a{color:red}\n.tab:focus-visible {\n  color: red;\n  outline: 0;\n}')[0]?.line, 4)
+  assert.ok(lintCss('button:focus{outline:none}').every((i) => i.level === 'warn'))
+  // A box-shadow or border drawn instead: no warning.
+  assert.deepEqual(focus('button:focus-visible{outline:none;box-shadow:0 0 0 2px #f0f}'), [])
+  assert.deepEqual(focus('button:focus{outline:0;border-color:#f0f}'), [])
+  // Not a focus rule, or the outline is kept: no warning.
+  assert.deepEqual(focus('button{outline:none}'), [])
+  assert.deepEqual(focus('.panel:focus-within{outline:none}'), [])
+  assert.deepEqual(focus('button:focus-visible{outline:2px solid #f0f;outline-offset:2px}'), [])
+})
+
 test('lint: terminal palettes need #hex colors', () => {
   assert.equal(lintTerminal('{"background":"red"}').some((i) => i.rule === 'terminal-color'), true)
   assert.equal(lintTerminal('nope')[0].rule, 'json')
