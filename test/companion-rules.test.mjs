@@ -435,3 +435,60 @@ test('debugState: every change of mode in the engine goes through setMode, and t
   assert.deepEqual(bare, [], 'assign mode with setMode(to, why)')
   assert.match(src, /f\('debugState',[^\n]*on: \(\) => false, preview: false/)
 })
+
+// Face swap: the old eyes fade out while the new ones fade in (opacity only, FADE_MS), and under reduced
+// motion it is a plain switch with no animation. Fake elements record what was asked of them.
+const faceEl = (opacity = '') => {
+  const el = { style: { opacity }, calls: [] }
+  el.animate = (keyframes, options) => {
+    const a = { keyframes, options, cancelled: false, cancel() { this.cancelled = true } }
+    el.calls.push(a)
+    return a
+  }
+  return el
+}
+const faceGroups = () => ({ eyes: [faceEl(), faceEl()], happyEyes: [faceEl('0')], sleepEyes: [faceEl('0')] })
+const plain = (v) => JSON.parse(JSON.stringify(v))
+
+test('face: a swap cross-fades the old and new eyes on opacity, 150 ms', () => {
+  const { face } = ctx.window.__orcaThemer.companionRules
+  assert.equal(face.FADE_MS, 150)
+  const g = faceGroups()
+  const started = face.swap(g, 'happyEyes', false)
+  assert.equal(started.length, 3, 'two open eyes out, the happy eyes in; the sleep eyes stay hidden')
+  for (const el of g.eyes) {
+    assert.equal(el.style.opacity, '0')
+    assert.deepEqual(plain(el.calls[0].keyframes), [{ opacity: 1 }, { opacity: 0 }])
+    assert.equal(el.calls[0].options.duration, 150)
+  }
+  assert.equal(g.happyEyes[0].style.opacity, '')
+  assert.deepEqual(plain(g.happyEyes[0].calls[0].keyframes), [{ opacity: 0 }, { opacity: 1 }])
+  assert.equal(g.sleepEyes[0].calls.length, 0)
+  for (const a of started) assert.deepEqual(Object.keys(a.keyframes[0]), ['opacity'], 'opacity only')
+})
+
+test('face: under reduced motion the swap is instant, with no animation', () => {
+  const { face } = ctx.window.__orcaThemer.companionRules
+  const g = faceGroups()
+  assert.equal(face.swap(g, 'sleepEyes', true).length, 0)
+  for (const el of [...g.eyes, ...g.happyEyes, ...g.sleepEyes]) assert.equal(el.calls.length, 0)
+  assert.deepEqual(g.eyes.map((e) => e.style.opacity), ['0', '0'])
+  assert.equal(g.happyEyes[0].style.opacity, '0')
+  assert.equal(g.sleepEyes[0].style.opacity, '')
+})
+
+test('face: a new swap cancels a fade still running, and the same face twice does nothing', () => {
+  const { face } = ctx.window.__orcaThemer.companionRules
+  const g = faceGroups()
+  const fades = new WeakMap()
+  const first = face.swap(g, 'happyEyes', false, 150, fades)
+  assert.equal(face.swap(g, 'happyEyes', false, 150, fades).length, 0)
+  face.swap(g, 'eyes', false, 150, fades)
+  assert.ok(first.every((a) => a.cancelled), 'the half-done fades are cancelled')
+  assert.deepEqual(g.eyes.map((e) => e.style.opacity), ['', ''])
+  assert.equal(g.happyEyes[0].style.opacity, '0')
+  // Reduced motion turning on mid-fade still cancels what is running.
+  const again = face.swap(g, 'sleepEyes', false, 150, fades)
+  face.swap(g, 'eyes', true, 150, fades)
+  assert.ok(again.every((a) => a.cancelled))
+})

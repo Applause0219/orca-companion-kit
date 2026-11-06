@@ -416,7 +416,33 @@
       for (const a of paused) if (a.playState === 'paused') a.play()
     }
   }
-  T.companionRules = { seek: SEEK, gitMoment, isReadable, lanternPhase, defaultWords: DEFAULT_WORDS, openTab, frontTab, goToTab, missing, stateTrace, idle: idleRules }
+  // Face swap (docs/states.md): the old eyes fade out while the new ones fade in, FADE_MS long, on opacity
+  // only, so the face does not jump. Under reduced motion it is a plain switch with no animation at all.
+  // `groups` maps each face part name to its elements; the resting value is written to style.opacity first,
+  // so a fade that is cut short (or never runs) still ends on the right face. A fade still running on an
+  // element is cancelled before a new one starts there. Returns the animations it started (for the tests).
+  const faceRules = {
+    FADE_MS: 150,
+    swap(groups, want, reduced, ms = faceRules.FADE_MS, fades = new WeakMap()) {
+      const started = []
+      for (const [name, els] of Object.entries(groups)) {
+        for (const el of els) {
+          const from = el.style.opacity === '0' ? 0 : 1
+          const to = name === want ? 1 : 0
+          if (from === to) continue
+          el.style.opacity = to ? '' : '0'
+          fades.get(el)?.cancel()
+          fades.delete(el)
+          if (reduced || !(ms > 0)) continue
+          const a = el.animate([{ opacity: from }, { opacity: to }], { duration: ms, easing: 'ease-in-out' })
+          fades.set(el, a)
+          started.push(a)
+        }
+      }
+      return started
+    }
+  }
+  T.companionRules = { seek: SEEK, gitMoment, isReadable, lanternPhase, defaultWords: DEFAULT_WORDS, openTab, frontTab, goToTab, missing, stateTrace, idle: idleRules, face: faceRules }
 
   // ---------- settings: the catalog the settings panel is drawn from, and the pure helpers ----------
   // Each pet's settings are one object, saved by the launcher as settings.json "companions"[<pet id>]
@@ -777,11 +803,13 @@
     // Faces: swap the open eyes for the happy or sleeping ones, when the drawing has them.
     for (const el of [...parts('happyEyes'), ...parts('sleepEyes')]) el.style.opacity = '0'
     let faceTimer = 0
+    const faceFades = new WeakMap()
     const setFace = (face, ms = 0) => {
       clearTimeout(faceTimer)
       const want = face === 'happy' ? 'happyEyes' : face === 'sleep' ? 'sleepEyes' : 'eyes'
       if (!parts(want).length) return
-      for (const name of ['eyes', 'happyEyes', 'sleepEyes']) for (const el of parts(name)) el.style.opacity = name === want ? '' : '0'
+      const groups = { eyes: parts('eyes'), happyEyes: parts('happyEyes'), sleepEyes: parts('sleepEyes') }
+      faceRules.swap(groups, want, !!T.reducedMotion?.(), faceRules.FADE_MS, faceFades)
       if (ms) faceTimer = setTimeout(() => !stopped && setFace(mode === 'asleep' ? 'sleep' : null), ms)
     }
 
