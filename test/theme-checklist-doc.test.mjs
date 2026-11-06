@@ -13,6 +13,17 @@ test('theme-checklist.md has its four sections', () => {
   }
 })
 
+test('the Orca screen coverage section lists each screen, ending with Design Mode', () => {
+  const start = doc.indexOf('## Orca 畫面覆蓋')
+  assert.ok(start >= 0, 'missing section: ## Orca 畫面覆蓋')
+  const next = doc.indexOf('\n## ', start + 1)
+  const items = doc.slice(start, next < 0 ? undefined : next).split(/\r?\n/).filter((l) => l.startsWith('- [ ] '))
+  const screens = ['通知收件匣', 'agents feed', 'diff 檢視器', '右鍵選單', '設定頁', 'Design Mode']
+  assert.equal(items.length, screens.length)
+  screens.forEach((name, i) => assert.ok(items[i].includes(name), `item ${i + 1} should be ${name}`))
+  assert.ok(items.at(-1).includes('外框和高亮還看得到'))
+})
+
 test('selector order is role/aria, then stable attributes, then class', () => {
   const role = doc.indexOf('1. **role／aria**')
   const attr = doc.indexOf('2. **穩定屬性**')

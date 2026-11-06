@@ -1,0 +1,10 @@
+
+> orca-companion-kit@0.1.0 guard
+> node tools/guard.mjs
+
+fatal: no upstream configured for branch 'spirit/p2026110620'
+LEAK .spirit-accept-test.txt:479  [personal-word] a personal word (name/handle/project) from the hashed list
+LEAK .spirit-accept-test.txt:732  [personal-word] a personal word (name/handle/project) from the hashed list
+
+privacy guard: 90 file(s), 0 commit(s), 2 problem(s) in 1131 ms
+Fix or remove these before pushing. A false alarm on a non-word rule can be silenced with a "privacy-guard: allow" comment on that line.
