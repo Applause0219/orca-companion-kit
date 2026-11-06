@@ -16,7 +16,7 @@ export { sleep }
 
 // Every new --user-data-dir makes Orca copy its build (~270 MB) into daemon-host-profiles\<hash>, and Orca never
 // deletes it. stop() removes the folders that appeared during this run once no process runs from them.
-const DAEMON_PROFILES = path.join(process.env.LOCALAPPDATA, 'Orca', 'daemon-host-profiles')
+const DAEMON_PROFILES = path.join(process.env.LOCALAPPDATA ?? '', 'Orca', 'daemon-host-profiles')
 const daemonProfiles = () => {
   try {
     return fs.readdirSync(DAEMON_PROFILES)
