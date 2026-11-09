@@ -51,7 +51,7 @@
 | `--callout-note` `--callout-important` | Markdown 提示框 |
 | `--radius` | 圓角基準 |
 
-另外記得寫 `color-scheme: dark;`，捲軸和原生控制項才會跟著變暗。
+另外記得寫 `color-scheme: dark;`，捲軸和原生控制項才會跟著變暗。忘了寫也沒關係：套著主題時，工具包會在主題 CSS 最前面補一行 `html.dark{color-scheme:dark}`，切回「Orca 原色」就拿掉；主題自己寫的 `color-scheme` 排在後面，照樣以主題的為準。淺色主題在檔頭加一行 ` * @scheme light`，補的就會是 `color-scheme:light`。
 
 想確認某個變數用在哪裡：開 Orca 的開發者工具（若你的 Orca 版本有開放，通常是 Ctrl+Shift+I 或「View」選單），選一個元素，看 Styles 面板裡用到的 `var(--…)`。
 

@@ -149,6 +149,8 @@ function freshWindow(media = { matches: false, addEventListener() {} }, { loaded
 }
 
 const payload = (css) => ({ state: { themes: [{ id: 'night', touches: [] }], themeId: 'night', enabledTouches: [] }, css })
+// With a theme on, the runtime puts color-scheme ahead of the theme's own rules (see the color-scheme tests).
+const themed = (css) => 'html.dark{color-scheme:dark}\n' + css
 
 test('reinject: a second copy in the same document is ignored (one runtime, one hello, one picker shortcut)', () => {
   const w = freshWindow()
@@ -170,7 +172,7 @@ test('reinject: applying again reuses the theme <style>, never adds a second one
   w.win.__orcaThemer.apply(payload(':root{--background:#111}'))
   const styles = w.themeStyles()
   assert.equal(styles.length, 1)
-  assert.equal(styles[0].textContent, ':root{--background:#111}')
+  assert.equal(styles[0].textContent, themed(':root{--background:#111}'))
   assert.equal(w.win.document.head.lastElementChild, styles[0], 'kept last in <head> so it wins ties')
   assert.equal(w.win.document.documentElement.dataset.orcaTheme, 'night')
 })
@@ -181,7 +183,7 @@ test('reinject: a page that finished loading before the runtime arrived gets the
   w.win.__orcaThemer.apply(payload(':root{--background:#000}'))
   const styles = w.themeStyles()
   assert.equal(styles.length, 1)
-  assert.equal(styles[0].textContent, ':root{--background:#000}')
+  assert.equal(styles[0].textContent, themed(':root{--background:#000}'))
   assert.equal(w.win.document.documentElement.dataset.orcaTheme, 'night')
 })
 
@@ -194,7 +196,7 @@ test('reinject: a theme <style> already in the page is taken over, not duplicate
   w.inject()
   w.win.__orcaThemer.apply(payload('a{}'))
   assert.deepEqual(w.themeStyles(), [old])
-  assert.equal(old.textContent, 'a{}')
+  assert.equal(old.textContent, themed('a{}'))
   assert.equal(w.win.document.head.lastElementChild, old)
 })
 
@@ -215,7 +217,7 @@ test('color scheme: changing meta color-scheme in place keeps exactly one theme 
   w.mutate()
   let styles = w.themeStyles()
   assert.equal(styles.length, 1, 'the theme is back, once')
-  assert.equal(styles[0].textContent, ':root{--background:#000}')
+  assert.equal(styles[0].textContent, themed(':root{--background:#000}'))
   assert.equal(head.lastElementChild, styles[0], 'still last in <head>')
   // A stray copy under our id (left by the page) is removed before re-adding, so they never stack.
   const stray = element('style')
@@ -225,7 +227,95 @@ test('color scheme: changing meta color-scheme in place keeps exactly one theme 
   w.mutate()
   styles = w.themeStyles()
   assert.equal(styles.length, 1)
-  assert.equal(styles[0].textContent, ':root{--background:#000}')
+  assert.equal(styles[0].textContent, themed(':root{--background:#000}'))
+})
+
+// The color-scheme the page ends up with, as the cascade would resolve it in this fake DOM: inline style on
+// <html> beats any sheet; among the theme sheet's rules whose selector matches <html>, the last one wins;
+// else the page's <meta name="color-scheme">; else 'normal'.
+function effectiveScheme(w) {
+  const html = w.win.document.documentElement
+  if (html.style?.colorScheme) return html.style.colorScheme
+  const dark = !!html.classList?.contains('dark')
+  let value = null
+  for (const s of w.themeStyles())
+    for (const m of s.textContent.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+      const sel = m[1].replace(/\/\*[\s\S]*?\*\//g, '').trim()
+      const decl = /(?:^|;)\s*color-scheme\s*:\s*([^;]+)/.exec(m[2])
+      if (decl && (sel === ':root' || sel === 'html' || (sel === 'html.dark' && dark))) value = decl[1].trim()
+    }
+  return value ?? w.win.document.querySelector('meta[name="color-scheme"]')?.getAttribute('content') ?? 'normal'
+}
+const classes = (...names) => ({ contains: (n) => names.includes(n) })
+const schemeLibrary = (header) => ({
+  themes: [{ id: 'night', name: 'night', touches: [], css: `/**\n * @name night\n${header} */\nhtml.dark{--background:#000}` }],
+  snippets: [{ id: 'tweak', name: 'tweak', touches: [], css: 'a{}' }]
+})
+const schemePayload = (library, themeId, enabledSnippets = []) => {
+  const settings = { themeId, enabledSnippets, enabledTouches: [] }
+  return { css: composeCss(library, settings), state: publicState(library, settings) }
+}
+
+test('color-scheme: a dark theme makes the page dark, and turning it off gives the page its own scheme back', () => {
+  const lib = schemeLibrary('')
+  const w = freshWindow()
+  w.win.document.documentElement.classList = classes('dark')
+  const meta = w.win.document.head.appendChild(element('meta'))
+  meta.setAttribute('name', 'color-scheme')
+  meta.setAttribute('content', 'light')
+  w.inject()
+  assert.equal(effectiveScheme(w), 'light', "the page's own scheme before any theme")
+  w.win.__orcaThemer.apply(schemePayload(lib, 'night'))
+  assert.equal(effectiveScheme(w), 'dark', 'dark with the theme on')
+  w.win.__orcaThemer.apply(schemePayload(lib, null))
+  assert.equal(effectiveScheme(w), 'light', '"Orca 原色" restores the page\'s own scheme')
+  w.win.__orcaThemer.apply(schemePayload(lib, null, ['tweak']))
+  assert.equal(effectiveScheme(w), 'light', 'snippets alone leave it alone too')
+  assert.equal(meta.getAttribute('content'), 'light', 'the page meta is never rewritten')
+})
+
+test('color-scheme: a theme whose header says @scheme light makes the page light, even under html.dark', () => {
+  const lib = schemeLibrary(' * @scheme light\n')
+  const w = freshWindow()
+  w.win.document.documentElement.classList = classes('dark')
+  w.inject()
+  w.win.__orcaThemer.apply(schemePayload(lib, 'night'))
+  assert.equal(effectiveScheme(w), 'light')
+  assert.doesNotMatch(w.themeStyles()[0].textContent, /color-scheme:dark/)
+  // A snippet mentioning @scheme does not decide it; only the theme's own header does.
+  const dark = schemeLibrary('')
+  dark.snippets[0].css = '/** @scheme light */ a{}'
+  w.win.__orcaThemer.apply(schemePayload(dark, 'night', ['tweak']))
+  assert.equal(effectiveScheme(w), 'dark')
+})
+
+test('color-scheme: on a page without html.dark (where the theme paints nothing) the page keeps its own scheme', () => {
+  const w = freshWindow()
+  w.win.document.documentElement.classList = classes('light')
+  w.inject()
+  w.win.__orcaThemer.apply(schemePayload(schemeLibrary(''), 'night'))
+  assert.equal(effectiveScheme(w), 'normal')
+})
+
+test('color-scheme: a theme turns on html.dark color-scheme ahead of its own rules, and turning it off takes it away', () => {
+  const w = freshWindow()
+  w.inject()
+  w.win.__orcaThemer.apply(payload('html.dark{--background:#000}'))
+  const [sheet] = w.themeStyles()
+  assert.ok(sheet.textContent.startsWith('html.dark{color-scheme:dark}'), 'dark with the theme on')
+  // First, so a theme that writes its own color-scheme (later, same specificity) still wins.
+  assert.ok(sheet.textContent.indexOf('color-scheme') < sheet.textContent.indexOf('--background'))
+  // "Orca 原色": themeId null and no CSS, so the page's own color-scheme is back.
+  w.win.__orcaThemer.apply({ state: { themeId: null }, css: '' })
+  for (const s of w.themeStyles()) assert.doesNotMatch(s.textContent, /color-scheme/)
+  // Snippets alone (no theme) keep the page's own scheme too.
+  w.win.__orcaThemer.apply({ state: { themeId: null }, css: 'a{}' })
+  assert.equal(w.themeStyles()[0].textContent, 'a{}')
+  // The page re-applying after an in-place light/dark switch keeps it with the theme.
+  w.win.__orcaThemer.apply(payload('b{}'))
+  w.win.document.documentElement.style = { colorScheme: 'light' }
+  w.mutate()
+  assert.equal(w.themeStyles()[0].textContent, themed('b{}'))
 })
 
 test('color scheme: unrelated mutations do not re-add the theme <style>, and theme off stays off', () => {
@@ -259,7 +349,7 @@ test('visibility: hidden -> visible with the theme <style> cleared puts it back 
   w.setVisibility('visible')
   const styles = w.themeStyles()
   assert.equal(styles.length, 1, 'the theme is back, once')
-  assert.equal(styles[0].textContent, ':root{--background:#000}')
+  assert.equal(styles[0].textContent, themed(':root{--background:#000}'))
   assert.equal(w.win.document.head.lastElementChild, styles[0])
   assert.equal(w.stylesCreated() - before, 1, 'applied a single time')
   w.setVisibility('visible') // already there: left alone

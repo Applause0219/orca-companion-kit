@@ -56,10 +56,22 @@
     return [meta?.getAttribute?.('content') ?? '', html?.style?.colorScheme ?? '', !!html?.classList?.contains('dark'), !!html?.classList?.contains('light')].join('|')
   }
   let lastScheme = null
+  // Why: themes paint html.dark, but without color-scheme the scrollbars and native controls (select,
+  // date inputs) keep the page's own scheme. Put it first so a theme that sets its own color-scheme still
+  // wins; it goes with the theme, so "Orca 原色" (no theme) or the diagnosis' no-CSS turn leaves the
+  // page's own value. The value is the theme's: dark unless its header says `@scheme light` (themes are
+  // registered with Orca as dark ones, so a light theme still paints under html.dark). Scoped to
+  // html.dark like the theme's colors: on a page without it the theme paints nothing, so neither do we.
+  const themeScheme = (text) => {
+    const header = /\/\* theme: [^\n]*\*\/[\s\S]*?\/\*\*([\s\S]*?)\*\//.exec(text)?.[1] ?? ''
+    return /@scheme\s+light\b/.test(header) ? 'light' : 'dark'
+  }
+  const schemeCss = (text) => `html.dark{color-scheme:${themeScheme(text)}}\n`
+  const sheetText = () => (suspended.css || !css ? '' : state.themeId ? schemeCss(css) + css : css)
   function reapplyTheme() {
     let el
     while ((el = document.getElementById(STYLE_ID))) el.remove()
-    if (css) styleElement().textContent = suspended.css ? '' : css
+    if (css) styleElement().textContent = sheetText()
   }
   const schemeObserver = new MutationObserver(() => {
     const key = schemeKey()
@@ -153,7 +165,7 @@
     css = next.css ?? css
     whenReady(() => {
       ensureUiStyle()
-      styleElement().textContent = suspended.css ? '' : css
+      styleElement().textContent = sheetText()
       headObserver.observe(document.head, { childList: true })
       observeScheme()
       document.documentElement.dataset.orcaTheme = state.themeId ?? ''
@@ -339,7 +351,7 @@
       current = name
       suspended.css = noCss
       suspended.touches = noTouches
-      styleElement().textContent = noCss ? '' : css
+      styleElement().textContent = sheetText()
       syncTouches()
     }
     const pending = new Map() // timeStamp -> config at that keystroke
