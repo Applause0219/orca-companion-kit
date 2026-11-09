@@ -2,6 +2,7 @@
  * @name Rosé Pine
  * @author rosé pine palette
  * @description 低飽和的玫瑰松林
+ * @touches editor-bg
  */
 html.dark {
   --background: #191724;
@@ -46,10 +47,11 @@ html.dark {
   color-scheme: dark;
 }
 
-/* The file editor (Monaco) brings its own colors; its background follows the theme instead. */
-html.dark .monaco-editor,
-html.dark .monaco-diff-editor,
-html.dark .monaco-component {
+/* The file editor (Monaco) brings its own colors; its background follows the theme instead.
+   Keyed on the editor-bg touch, so a syntax-highlight plugin's own background wins once it is turned off. */
+html.dark[data-orca-touch-editor-bg] .monaco-editor,
+html.dark[data-orca-touch-editor-bg] .monaco-diff-editor,
+html.dark[data-orca-touch-editor-bg] .monaco-component {
   --vscode-editor-background: var(--background) !important;
   --vscode-editorGutter-background: var(--background) !important;
   --vscode-minimap-background: var(--background) !important;

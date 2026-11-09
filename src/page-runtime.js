@@ -81,7 +81,9 @@
   function syncTouches() {
     // Only touches the current theme declares may run; switching themes stops the rest.
     const declared = state.themes.find((t) => t.id === state.themeId)?.touches ?? []
-    const wanted = new Set(reducedMotion() || suspended.touches ? [] : state.enabledTouches.filter((id) => declared.includes(id)))
+    // Reduced motion stops the touches that move; a still one (still: true, e.g. editor-bg, only colors) stays.
+    const on = suspended.touches ? [] : state.enabledTouches.filter((id) => declared.includes(id))
+    const wanted = new Set(reducedMotion() ? on.filter((id) => touches.get(id)?.still) : on)
     for (const [id, stop] of running) {
       if (!wanted.has(id)) {
         try {
@@ -422,10 +424,12 @@
       syncTouches()
     },
     // A touch that only sets html[data-orca-touch-<id>] while it is on; the theme CSS keys on that attribute.
-    registerAttrTouch(id, { label, description } = {}) {
+    // still: nothing in its CSS moves, so it stays on under reduced motion.
+    registerAttrTouch(id, { label, description, still = false } = {}) {
       this.registerTouch(id, {
         label,
         description,
+        still,
         start() {
           document.documentElement.setAttribute(`data-orca-touch-${id}`, '')
           return () => document.documentElement.removeAttribute(`data-orca-touch-${id}`)

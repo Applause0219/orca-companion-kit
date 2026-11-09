@@ -22,15 +22,23 @@ test('the terminal settings it names are the ones the launcher writes', () => {
   }
 })
 
-test('the built-in themes still override the Monaco background with !important, as the doc says', () => {
+test('the built-in themes key their Monaco rule on the editor-bg touch, so it can be turned off', () => {
   for (const file of ['themes/catppuccin-mocha.css', 'themes/rose-pine.css', 'themes/tokyo-night.css', 'examples/themes/cotton-sky.css']) {
-    assert.match(read(file), /\.monaco-editor[^{]*\{[^}]*--vscode-editor-background:[^;]*!important/, file)
+    const css = read(file)
+    const rules = [...css.matchAll(/([^{}]*)\{([^}]*)\}/g)].filter(([, , body]) => body.includes('--vscode-editor-background'))
+    assert.ok(rules.length, `${file}: no Monaco rule`)
+    for (const [, selectors] of rules) {
+      const list = selectors.replace(/\/\*[\s\S]*?\*\//g, '').split(',').map((s) => s.trim()).filter(Boolean)
+      for (const s of list) assert.match(s, /^html\.dark\[data-orca-touch-editor-bg\] /, `${file}: ${s}`)
+    }
+    assert.match(css, /@touches[^\n]*\beditor-bg\b/, `${file}: @touches does not list editor-bg`)
   }
+  assert.match(doc, /html\[data-orca-touch-editor-bg\]/)
 })
 
 test('the touches it names exist', () => {
   const builtin = read('src/touches/builtin.js')
-  for (const id of ['custom-cursor', 'theme-sound']) assert.ok(builtin.includes(id), id)
+  for (const id of ['custom-cursor', 'editor-bg', 'theme-sound']) assert.ok(builtin.includes(`'${id}'`), id)
 })
 
 test('links in official-theme-plugins.md point at existing docs, and themes.md links to it', () => {

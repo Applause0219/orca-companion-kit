@@ -23,6 +23,7 @@
 | --- | --- |
 | `power-mode` | 終端機打字時從游標迸出火花，並計算連擊數；顏色取 `--oc-spark-1..4` |
 | `custom-cursor` | 在 `<html>` 加上 `data-orca-touch-custom-cursor`，主題 CSS 依這個屬性換游標 |
+| `editor-bg` | 在 `<html>` 加上 `data-orca-touch-editor-bg`，主題結尾那段 Monaco 規則（編輯器底色跟外框一致）掛在它底下；可關掉，關掉就讓語法高亮外掛的底色生效 |
 | `theme-sound` | 把 Orca 的通知音效換成 `sounds/<主題 id>.wav`，關掉就換回原本的 |
 
 你自己的 touch 和寵物放在 `~/.orca/themer/touches/*.js`，見 [touches.md](touches.md) 和 [companion-api.md](companion-api.md)。
@@ -76,7 +77,7 @@
 | `[data-sonner-toast]` | 通知。**它的 `::before`、`::after` sonner 自己在用**，裝飾請用 `background` 疊圖層 |
 | `[data-sidebar-resize-handle]` | 左側欄右緣可拖曳改寬度的那條邊 |
 | `[data-panel-resize-handle-id]`、`[role='separator']` | 面板之間可拖曳的分隔線（只在分割窗格時才有） |
-| `.monaco-editor`、`.monaco-diff-editor` | 檔案編輯器（Monaco）。它不吃 Orca 的變數，背景是自己的 `--vscode-editor-background`；在這兩個選擇器上用 `!important` 改這些 `--vscode-*` 變數（四套內建主題結尾都有範例） |
+| `.monaco-editor`、`.monaco-diff-editor` | 檔案編輯器（Monaco）。它不吃 Orca 的變數，背景是自己的 `--vscode-editor-background`；在這兩個選擇器上用 `!important` 改這些 `--vscode-*` 變數。規則掛在 `html.dark[data-orca-touch-editor-bg]` 底下、`@touches` 加上 `editor-bg`，使用者就能在選單裡關掉，讓語法高亮外掛的底色生效（四套內建主題結尾都有範例） |
 
 Orca 改版後第一次啟動，啟動器會自動查一次常駐的掛點（worktree 側欄、側欄拖曳邊，以及開著終端機時的分頁和終端機輸入框）。找不到的會在 Orca 跳一則提醒，細節寫進 `themer.log`；同一版只查一次，查過的版本記在 `~/.orca/themer/orca-version.json`。
 

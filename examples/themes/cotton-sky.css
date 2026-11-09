@@ -2,7 +2,7 @@
  * @name 棉花夜空 Cotton Sky
  * @author orca-companion-kit
  * @description 深藍夜空配奶油色與桃粉，搭配棉花羊 Puff
- * @touches power-mode, puff, custom-cursor
+ * @touches power-mode, puff, custom-cursor, editor-bg
  */
 /* The example theme. Everything below the header is plain CSS.
    1. Orca's own color tokens (the full list: Orca repo src/renderer/src/assets/main.css, the `.dark` block).
@@ -67,10 +67,11 @@ html[data-orca-touch-custom-cursor] *:not([data-panel-resize-handle-id], [data-r
     default !important;
 }
 
-/* The file editor (Monaco) brings its own colors; its background follows the theme instead. */
-html.dark .monaco-editor,
-html.dark .monaco-diff-editor,
-html.dark .monaco-component {
+/* The file editor (Monaco) brings its own colors; its background follows the theme instead.
+   Keyed on the editor-bg touch, so a syntax-highlight plugin's own background wins once it is turned off. */
+html.dark[data-orca-touch-editor-bg] .monaco-editor,
+html.dark[data-orca-touch-editor-bg] .monaco-diff-editor,
+html.dark[data-orca-touch-editor-bg] .monaco-component {
   --vscode-editor-background: var(--background) !important;
   --vscode-editorGutter-background: var(--background) !important;
   --vscode-minimap-background: var(--background) !important;

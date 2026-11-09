@@ -36,7 +36,7 @@ Test-Path "$HOME\.orca\themer"   # exists after the first launch through the kit
 | `touches/<pet>.js` | `registerCompanion({...})`：SVG、parts、lines（含心情台詞 low、lonely、sulk、consoled……）、words、acts、emotion.words | [companion-api.md](companion-api.md)、`examples/touches/puff.js` |
 | `sounds/<id>.wav`（選用） | `npm run chime -- …` 產生 | [themes.md#音效](themes.md) |
 
-主題的 `@touches` 要列出用到的 touch：`power-mode, <pet id>, custom-cursor`（有音效再加 `theme-sound`）。
+主題的 `@touches` 要列出用到的 touch：`power-mode, <pet id>, custom-cursor, editor-bg`（有音效再加 `theme-sound`）。
 
 ## 3. 怎麼做
 

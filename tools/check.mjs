@@ -38,7 +38,7 @@ for (const root of roots) {
   for (const file of list(path.join(root, 'touches'), '.js')) report(file, lintTouch(fs.readFileSync(file, 'utf8'), file))
   for (const file of list(path.join(root, 'terminal'), '.json')) report(file, lintTerminal(fs.readFileSync(file, 'utf8')))
   // Theme headers: a name, and touches that some file actually registers.
-  const known = new Set(['power-mode', 'custom-cursor', 'theme-sound'])
+  const known = new Set(['power-mode', 'custom-cursor', 'editor-bg', 'theme-sound'])
   for (const dir of [path.join(REPO, 'src', 'touches'), path.join(root, 'touches')])
     for (const file of list(dir, '.js'))
       for (const m of fs.readFileSync(file, 'utf8').matchAll(/(?:registerTouch|registerAttrTouch)\(\s*['"`]([\w-]+)|registerCompanion\(\s*\{[\s\S]*?\bid:\s*['"`]([\w-]+)/g)) known.add(m[1] ?? m[2])

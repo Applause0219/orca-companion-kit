@@ -342,6 +342,19 @@ test('reduced motion: turning it on stops a running companion, turning it off st
   assert.deepEqual(log, ['start', 'stop', 'start'])
 })
 
+test('reduced motion: a still attribute touch (editor-bg) stays on; one that moves is stopped', () => {
+  const media = { matches: true, listeners: [], addEventListener(type, fn) { if (type === 'change') this.listeners.push(fn) } }
+  const w = freshWindow(media)
+  w.inject()
+  const rt = w.win.__orcaThemer
+  rt.registerAttrTouch('editor-bg', { still: true })
+  rt.registerAttrTouch('custom-cursor', {})
+  rt.apply({ state: { themes: [{ id: 'night', touches: ['editor-bg', 'custom-cursor'] }], themeId: 'night', enabledTouches: ['editor-bg', 'custom-cursor'] }, css: '' })
+  const html = w.win.document.documentElement
+  assert.equal('data-orca-touch-editor-bg' in html.attributes, true, 'colors only: on')
+  assert.equal('data-orca-touch-custom-cursor' in html.attributes, false, 'unchanged: off under reduced motion')
+})
+
 // The launcher half: what makes the page side above happen on every reload and every window.
 const handler = (event) => {
   const start = LAUNCHER.indexOf(`cdp.on('${event}'`)
