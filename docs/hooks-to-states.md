@@ -186,3 +186,5 @@ if (label) writeFileSync(join(homedir(), '.pet-status.json'), JSON.stringify({ l
 ```
 
 讀這個檔案的那一邊（你的寵物或小工具）照上面的對照表決定演什麼；`waiting` 要一直留著，直到下一個不是 `waiting` 的標籤進來。
+
+想在 Windows 上直接跳系統通知，而不是寫檔給寵物讀，見 [hooks-notification-windows.md](hooks-notification-windows.md)。
