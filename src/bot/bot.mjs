@@ -62,7 +62,7 @@ export function createBot({ env = process.env, root = userRoot(env), read = read
     if (x.skill) {
       const d = saveDraft(root, x.skill, url)
       // The whole draft is shown, so the decision is made on what will really be installed.
-      await send(`Skill draft \`${d.name}\` (stays a draft until you press Install; it came from untrusted content, so read it first):\n\`\`\`markdown\n${d.text.replace(/```/g, "'''")}\n\`\`\``, draftButtons(d.name))
+      await send(`Skill draft \`${d.name}\` (stays a draft until you press Install; it came from untrusted content, so read it first):\n\`\`\`markdown\n${d.text.replace(/```/g, "'''")}\n\`\`\``, draftButtons(d.id, d.hash.slice(0, 10)))
     }
   }
 
@@ -89,10 +89,10 @@ export function createBot({ env = process.env, root = userRoot(env), read = read
   }
 
   // Only the gateway calls this, and only for a button the owner pressed.
-  async function onButton(action, name) {
-    if (action === 'discard') return discardDraft(root, name) ? `Discarded the draft ${name}.` : 'Nothing to discard.'
-    const r = installDraft(root, name, skillsTarget())
-    return r.ok ? `Installed ${name} into ${r.dest}.` : `Not installed: ${r.why}`
+  async function onButton(action, id, hash) {
+    if (action === 'discard') return discardDraft(root, id) ? `Discarded the draft ${id}.` : 'Nothing to discard.'
+    const r = installDraft(root, id, hash, skillsTarget())
+    return r.ok ? `Installed ${r.name} into ${r.dest}.` : `Not installed: ${r.why}`
   }
 
   return { onMessage, onSlash, onButton, history }

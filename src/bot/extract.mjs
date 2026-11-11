@@ -1,6 +1,8 @@
 // Turns fetched content into a structured extraction. The content is untrusted: it goes into a delimited
-// block that is labelled as data, and the model has no tools, so even a successful injection can only change
-// the text of the answer, never run anything. Nothing here installs anything.
+// block that is labelled as data. The claude call is started with no built-in tools, no MCP servers, no
+// settings (so no user hooks) and no auto-approval (see claudeArgs in brain.mjs), so a successful injection
+// should only be able to change the text of the answer. That is a mitigation, not a guarantee: the model
+// output is still untrusted, which is why skill drafts need an explicit button press to install.
 import crypto from 'node:crypto'
 import { callClaude } from './brain.mjs'
 import { skillName } from './core.mjs'

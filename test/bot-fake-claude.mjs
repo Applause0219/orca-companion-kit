@@ -13,7 +13,7 @@ process.stdin.on('end', () => {
       summary: 'A fake summary.',
       tools: [{ name: 'yt-dlp', link: 'https://github.com/yt-dlp/yt-dlp', purpose: 'reads video metadata' }],
       techniques: ['Use captions instead of audio'],
-      skill_draft: draft ? { name: 'Caption-Reader!', description: 'Read captions of a video', body: '1. Run the tool.\n2. Read the text.' } : null,
+      skill_draft: draft ? { name: 'Caption-Reader!', description: 'Read captions of a video', body: '1. Run the tool.\n2. Read the text.' + (/version (\d+)/.exec(input) ? ` v${/version (\d+)/.exec(input)[1]}` : '') } : null,
       confidence: 'medium: fake'
     }))
   } else console.log('echo: ' + input.split('\n').filter(Boolean).pop())

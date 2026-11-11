@@ -5,6 +5,25 @@ import net from 'node:net'
 
 export class BlockedError extends Error {}
 
+/** An IPv6 literal as 8 numbers (handles :: and a trailing dotted IPv4), or null. */
+function v6groups(s) {
+  let t = s
+  const dotted = /(\d+\.\d+\.\d+\.\d+)$/.exec(t)
+  if (dotted) {
+    const p = dotted[1].split('.').map(Number)
+    if (!net.isIPv4(dotted[1])) return null
+    t = t.slice(0, -dotted[1].length) + ((p[0] << 8) | p[1]).toString(16) + ':' + ((p[2] << 8) | p[3]).toString(16)
+  }
+  const [head, tail, extra] = t.split('::')
+  if (extra !== undefined) return null
+  const a = head ? head.split(':') : []
+  const b = tail === undefined ? [] : tail ? tail.split(':') : []
+  const fill = tail === undefined ? 0 : 8 - a.length - b.length
+  if (fill < 0 || (tail === undefined && a.length !== 8)) return null
+  const all = [...a, ...Array(fill).fill('0'), ...b].map((x) => parseInt(x, 16))
+  return all.length === 8 && all.every((x) => Number.isInteger(x) && x >= 0 && x <= 0xffff) ? all : null
+}
+
 /** True for loopback, private, link-local, CGNAT, multicast, unspecified and reserved addresses (v4 and v6). */
 export function isPrivateIp(ip) {
   const s = String(ip).toLowerCase().replace(/^\[|\]$/g, '').split('%')[0]
@@ -16,17 +35,16 @@ export function isPrivateIp(ip) {
     )
   }
   if (net.isIPv6(s)) {
-    if (s === '::' || s === '::1') return true
-    const mapped = /^(?:0:0:0:0:0:ffff:|::ffff:)(.+)$/.exec(s)
-    if (mapped) {
-      const rest = mapped[1]
-      if (net.isIPv4(rest)) return isPrivateIp(rest)
-      const h = rest.split(':').map((x) => parseInt(x, 16))
-      if (h.length === 2 && h.every(Number.isFinite)) return isPrivateIp(`${h[0] >> 8}.${h[0] & 255}.${h[1] >> 8}.${h[1] & 255}`)
-      return true
-    }
-    const first = parseInt(s.split(':')[0] || '0', 16)
-    return (first & 0xfe00) === 0xfc00 || (first & 0xffc0) === 0xfe80 || (first & 0xff00) === 0xff00 || s.startsWith('64:ff9b:')
+    const g = v6groups(s)
+    if (!g) return true
+    const v4 = (a, b) => `${a >> 8}.${a & 255}.${b >> 8}.${b & 255}`
+    if (g.slice(0, 7).every((x) => x === 0) && g[7] <= 1) return true // :: and ::1
+    if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) return isPrivateIp(v4(g[6], g[7])) // ::ffff:a.b.c.d
+    if (g.slice(0, 6).every((x) => x === 0)) return true // IPv4-compatible ::a.b.c.d (deprecated)
+    if (g[0] === 0x2002) return isPrivateIp(v4(g[1], g[2])) // 6to4: judge the embedded IPv4
+    if (g[0] === 0x2001 && g[1] === 0) return true // Teredo 2001::/32
+    if (g[0] === 0x64 && g[1] === 0xff9b) return true // NAT64
+    return (g[0] & 0xfe00) === 0xfc00 || (g[0] & 0xffc0) === 0xfe80 || (g[0] & 0xffc0) === 0xfec0 || (g[0] & 0xff00) === 0xff00 // fc00::/7, fe80::/10, fec0::/10, ff00::/8
   }
   return true // not an address at all: refuse
 }

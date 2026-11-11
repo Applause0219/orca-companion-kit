@@ -1,5 +1,6 @@
 // Notes, index, skill drafts. Everything lives in <root>/bot (outside git). A draft is only copied into a
 // skills folder by installDraft, which the bot calls only after the owner presses the Install button.
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -66,40 +67,75 @@ export function searchNotes(root, q, limit = 8) {
 export const skillMarkdown = (s, sourceUrl) =>
   `---\nname: ${s.name}\ndescription: ${oneLine(s.description) || s.name}\n---\n\n<!-- Drafted by the Discord bot from ${sourceUrl}. Review before use. -->\n\n${s.body}\n`
 
-/** Writes <root>/bot/skill-drafts/<name>/SKILL.md (never touches any skills folder) -> { name, file, text }. */
+// ---------- skill drafts ----------
+// Each draft gets its own folder <root>/bot/skill-drafts/<name>-<nonce>/ with SKILL.md and draft.json (the
+// skill name and the SHA-256 of SKILL.md). The folder name (the draft id) and the first 10 hex characters of
+// the hash go into the button's custom_id, so Install can only ever install the exact text the message
+// showed: a newer draft with the same name, or an edited file, does not match. Installing or discarding
+// removes the draft, so a button pressed twice (or after Discard) finds nothing.
+export const DRAFT_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+export const HASH10 = /^[0-9a-f]{10}$/
+const sha = (t) => crypto.createHash('sha256').update(t).digest('hex')
+const draftDir = (root, id) => (DRAFT_ID.test(String(id)) && String(id).length <= 60 ? path.join(dirs(root).drafts, id) : null)
+
+/** Writes a new draft (never touches any skills folder, never overwrites one) -> { id, name, file, text, hash }. */
 export function saveDraft(root, s, sourceUrl) {
   const name = skillName(s.name)
   if (!name) throw new Error('invalid skill name')
-  const dir = path.join(dirs(root).drafts, name)
-  fs.mkdirSync(dir, { recursive: true })
   const text = skillMarkdown({ ...s, name }, sourceUrl)
-  fs.writeFileSync(path.join(dir, 'SKILL.md'), text)
-  return { name, file: path.join(dir, 'SKILL.md'), text }
+  fs.mkdirSync(dirs(root).drafts, { recursive: true })
+  for (let tries = 0; tries < 20; tries++) {
+    const id = `${name}-${crypto.randomBytes(4).toString('hex')}`
+    const dir = path.join(dirs(root).drafts, id)
+    try {
+      fs.mkdirSync(dir) // not recursive: fails when the id exists, so a draft is never overwritten
+    } catch (e) {
+      if (e.code === 'EEXIST') continue
+      throw e
+    }
+    const hash = sha(text)
+    fs.writeFileSync(path.join(dir, 'SKILL.md'), text)
+    fs.writeFileSync(path.join(dir, 'draft.json'), JSON.stringify({ name, hash, source: sourceUrl }))
+    return { id, name, file: path.join(dir, 'SKILL.md'), text, hash }
+  }
+  throw new Error('could not allocate a draft id')
 }
 
 /** The configured skills folder: BOT_SKILLS_DIR, else ~/.claude/skills. */
 export const skillsDir = (env = process.env) => env.BOT_SKILLS_DIR || path.join(os.homedir(), '.claude', 'skills')
 
 /**
- * Copies one draft into the skills folder. Call only after an explicit owner action. Refuses to overwrite an
- * existing skill. -> { ok, dest?, why? }
+ * Copies one draft into the skills folder. Call only after an explicit owner action. `hash10` is what the
+ * button carried (the hash of the text that was shown); the draft on disk must still match it. Refuses to
+ * overwrite an existing skill, and removes the draft once installed. -> { ok, dest?, why? }
  */
-export function installDraft(root, name, target) {
-  const n = skillName(name)
-  if (!n || n !== name) return { ok: false, why: 'bad name' }
-  const src = path.join(dirs(root).drafts, n, 'SKILL.md')
-  if (!fs.existsSync(src)) return { ok: false, why: 'the draft no longer exists' }
-  const dest = path.join(target, n)
-  if (fs.existsSync(dest)) return { ok: false, why: `a skill named ${n} already exists there; not overwritten` }
+export function installDraft(root, id, hash10, target) {
+  const dir = draftDir(root, id)
+  if (!dir || !HASH10.test(String(hash10))) return { ok: false, why: 'bad draft reference' }
+  let meta
+  let text
+  try {
+    meta = JSON.parse(fs.readFileSync(path.join(dir, 'draft.json'), 'utf8'))
+    text = fs.readFileSync(path.join(dir, 'SKILL.md'), 'utf8')
+  } catch {
+    return { ok: false, why: 'the draft no longer exists (already installed or discarded)' }
+  }
+  const h = sha(text)
+  if (h !== meta.hash || !h.startsWith(hash10)) return { ok: false, why: 'the draft does not match what was shown; not installed' }
+  const name = skillName(meta.name)
+  if (!name || name !== meta.name) return { ok: false, why: 'bad skill name' }
+  const dest = path.join(target, name)
+  if (fs.existsSync(dest)) return { ok: false, why: `a skill named ${name} already exists there; not overwritten` }
   fs.mkdirSync(dest, { recursive: true })
-  fs.copyFileSync(src, path.join(dest, 'SKILL.md'))
-  return { ok: true, dest }
+  fs.writeFileSync(path.join(dest, 'SKILL.md'), text)
+  fs.rmSync(dir, { recursive: true, force: true })
+  return { ok: true, dest, name }
 }
 
 /** Removes a draft folder. */
-export function discardDraft(root, name) {
-  const n = skillName(name)
-  if (!n || n !== name) return false
-  fs.rmSync(path.join(dirs(root).drafts, n), { recursive: true, force: true })
+export function discardDraft(root, id) {
+  const dir = draftDir(root, id)
+  if (!dir || !fs.existsSync(dir)) return false
+  fs.rmSync(dir, { recursive: true, force: true })
   return true
 }

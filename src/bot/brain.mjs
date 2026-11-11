@@ -7,6 +7,24 @@ import path from 'node:path'
 export const DEFAULT_PERSONA = 'You are a helpful, concise assistant in a private Discord chat. Answer in the language the user writes in. Keep replies short unless asked for detail.'
 
 /**
+ * The flags that keep the call a plain text completion:
+ *  --tools ""                 no built-in tools
+ *  --strict-mcp-config        with no --mcp-config: no MCP servers (the account's connectors are not loaded)
+ *  --setting-sources ""       none of the user, project or local settings (their hooks, plugins, permissions)
+ *  --settings {disableAllHooks} belt and braces for hooks
+ *  --permission-mode manual   nothing is ever auto-approved
+ *  (--bare would also skip hooks, but it disables the normal login, so it is not used.)
+ * Verified with `claude -p --output-format stream-json --verbose`: the init event lists 0 tools and 0 MCP servers.
+ * Plugins injected by the host environment (not by settings) are outside what these flags control.
+ */
+export function claudeArgs({ model = '', system = '' } = {}) {
+  const args = ['-p', '--tools', '', '--strict-mcp-config', '--setting-sources', '', '--settings', '{"disableAllHooks":true}', '--permission-mode', 'manual', '--no-session-persistence', '--disable-slash-commands', '--output-format', 'text']
+  if (model) args.push('--model', model)
+  if (system) args.push('--system-prompt', system)
+  return args
+}
+
+/**
  * One claude call. `BOT_CLAUDE` may name a replacement: a .mjs/.js file (run with node) or an executable
  * (tests use this). Never throws: { ok, text, error }.
  */
@@ -15,9 +33,7 @@ export function callClaude({ prompt, system = '', model = '', env = process.env,
     const override = env.BOT_CLAUDE || ''
     const isScript = /\.(m?js|cjs)$/i.test(override)
     const cmd = override ? (isScript ? process.execPath : override) : 'claude'
-    const args = ['-p', '--tools', '', '--no-session-persistence', '--disable-slash-commands', '--output-format', 'text']
-    if (model) args.push('--model', model)
-    if (system) args.push('--system-prompt', system)
+    const args = claudeArgs({ model, system })
     const argv = override && isScript ? [override, ...args] : args
     // An empty working folder, so nothing in a project is picked up as context.
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-claude-'))

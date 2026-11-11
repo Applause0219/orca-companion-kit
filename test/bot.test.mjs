@@ -6,11 +6,12 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DISCORD_MAX, botConfig, extractUrls, linkKind, maskSecrets, parseEnv, splitMessage } from '../src/bot/core.mjs'
 import { BlockedError, assertPublicUrl, isPrivateIp, safeFetchText } from '../src/bot/net-safe.mjs'
-import { buildExtractionPrompt, parseExtraction } from '../src/bot/extract.mjs'
+import { EXTRACT_SYSTEM, buildExtractionPrompt, extract, parseExtraction } from '../src/bot/extract.mjs'
+import { claudeArgs } from '../src/bot/brain.mjs'
 import { captionsToText, htmlToText, parseMeta, readLink, ytdlpInfo } from '../src/bot/intake.mjs'
 import { installDraft, listNotes, saveDraft, saveNote, searchNotes } from '../src/bot/notes.mjs'
 import { createBot } from '../src/bot/bot.mjs'
-import { createGateway, isOwnerDm } from '../src/bot/gateway.mjs'
+import { createGateway, createOutbox, heartbeatGuard, isOwnerDm, parseButtonId } from '../src/bot/gateway.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const FAKE_CLAUDE = path.join(HERE, 'bot-fake-claude.mjs')
@@ -91,7 +92,25 @@ test('page parsing: meta tags, visible text, captions', () => {
   assert.equal(captionsToText('WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nhello <c>there</c>\n\n00:00:02.000 --> 00:00:04.000\nhello there\n\n00:00:04.000 --> 00:00:05.000\nbye'), 'hello there bye')
 })
 
-test('readLink: Threads uses the preview crawler identity and reports the login-wall limit', async () => {
+test('page parsing stays linear on adversarial input (1.5 MB under 200 ms each)', () => {
+  const MB = 1_500_000
+  const cases = ['<meta '.repeat(MB / 6), '<'.repeat(MB), '<script>'.repeat(MB / 8), '<!--'.repeat(MB / 4), '&'.repeat(MB), '<a '.repeat(MB / 3), '\n '.repeat(MB / 2), '<p>x</p>'.repeat(MB / 8), '<p>'.repeat(MB / 3), ' \t'.repeat(MB / 2) + 'x', '<meta content="'.repeat(MB / 15)]
+  for (const html of cases) {
+    // Best of three: the suite runs many test files in parallel, so one run can be slowed by other processes;
+    // a quadratic scan would take seconds on every run.
+    let best = Infinity
+    for (let i = 0; i < 3 && best >= 200; i++) {
+      const t = Date.now()
+      parseMeta(html)
+      htmlToText(html)
+      best = Math.min(best, Date.now() - t)
+    }
+    assert.ok(best < 200, `${html.slice(0, 12).replace(/\n/g, '~')} took ${best} ms`)
+  }
+  assert.equal(htmlToText('<p>Hello</p><script>evil()</script><P>World &amp; co</P><!-- c -->a<br>b'), 'Hello\nWorld & co\na\nb')
+})
+
+test('readLink: Threads uses the ordinary browser identity by default; the crawler identity is opt-in', async () => {
   let ua = ''
   const fetchImpl = async (url, opts) => {
     ua = opts.headers['User-Agent']
@@ -100,13 +119,61 @@ test('readLink: Threads uses the preview crawler identity and reports the login-
   const r = await readLink('https://www.threads.com/@a/post/b', { env: {}, fetchImpl, lookup: publicLookup })
   assert.equal(r.source, 'og-meta')
   assert.equal(r.text, 'post text')
-  assert.match(ua, /facebookexternalhit/)
-  assert.match(r.limits.join(' '), /login-walled/)
-  // BOT_SOCIAL_UA=off sends the ordinary browser identity instead.
-  await readLink('https://www.threads.com/@a/post/b', { env: { BOT_SOCIAL_UA: 'off' }, fetchImpl, lookup: publicLookup })
   assert.match(ua, /Mozilla/)
-  // Private targets are refused before anything runs.
-  await assert.rejects(readLink('http://127.0.0.1/x', { env: {}, fetchImpl, lookup: publicLookup }), BlockedError)
+  assert.doesNotMatch(ua, /facebookexternalhit/)
+  assert.match(r.limits.join(' '), /login-walled/)
+  await readLink('https://www.threads.com/@a/post/b', { env: { BOT_SOCIAL_UA: 'crawler' }, fetchImpl, lookup: publicLookup })
+  assert.match(ua, /facebookexternalhit/)
+  await readLink('https://www.threads.com/@a/post/b', { env: { BOT_SOCIAL_UA: 'MyAgent/1' }, fetchImpl, lookup: publicLookup })
+  assert.equal(ua, 'MyAgent/1')
+  await readLink('https://example.com/', { env: { BOT_SOCIAL_UA: 'crawler' }, fetchImpl, lookup: publicLookup })
+  assert.match(ua, /Mozilla/, 'the opt-in applies to Threads and Instagram only')
+})
+
+test('readLink: a host that resolves to a private address is refused before yt-dlp or fetch see it', async () => {
+  let ran = 0
+  let fetched = 0
+  const privateLookup = async () => [{ address: '10.0.0.5' }]
+  const opts = { env: {}, lookup: privateLookup, ytdlpExec: async () => (ran++, { error: null, stdout: '{}', stderr: '' }), fetchImpl: async () => (fetched++, new Response('x')) }
+  await assert.rejects(readLink('https://x.instagram.com/reel/abc/', opts), BlockedError)
+  await assert.rejects(readLink('https://m.youtube.com/watch?v=abc', opts), BlockedError)
+  await assert.rejects(readLink('http://127.0.0.1/x', opts), BlockedError)
+  assert.equal(ran, 0, 'yt-dlp was never started')
+  assert.equal(fetched, 0)
+})
+
+test('SSRF: IPv4-compatible, 6to4, Teredo and site-local IPv6 forms are refused', () => {
+  for (const ip of ['::7f00:1', '::127.0.0.1', '::a00:1', '2002:7f00:1::1', '2002:c0a8:101::', '2002:a9fe:a9fe::', '2001:0:4136:e378:8000:63bf:3fff:fdd2', 'fec0::1', 'feff::1', '64:ff9b::7f00:1']) assert.equal(isPrivateIp(ip), true, ip)
+  for (const ip of ['2002:5db8:d822::1', '2606:4700::1111', '::ffff:8.8.8.8']) assert.equal(isPrivateIp(ip), false, ip)
+})
+
+test('claude is started as a plain completion: no tools, no MCP, no settings or hooks, nothing auto-approved', () => {
+  const a = claudeArgs({ model: 'm', system: 'sys' })
+  const at = (flag) => a[a.indexOf(flag) + 1]
+  assert.equal(at('--tools'), '')
+  assert.ok(a.includes('--strict-mcp-config') && !a.includes('--mcp-config'))
+  assert.equal(at('--setting-sources'), '')
+  assert.deepEqual(JSON.parse(at('--settings')), { disableAllHooks: true })
+  assert.equal(at('--permission-mode'), 'manual')
+  assert.ok(a.includes('--no-session-persistence') && a.includes('--disable-slash-commands'))
+  assert.ok(!a.includes('--dangerously-skip-permissions') && !a.includes('--bare'))
+  assert.equal(at('--model'), 'm')
+  assert.equal(at('--system-prompt'), 'sys')
+})
+
+test('extraction call carries the untrusted-data instructions as the system prompt', async () => {
+  for (const must of [/untrusted DATA/, /never an instruction/, /ignore any request, command, role change/i, /do not follow links/, /ONE JSON object only/]) assert.match(EXTRACT_SYSTEM, must)
+  let seen
+  await extract({ url: 'https://x.example', kind: 'web', source: 'page', limits: [], title: 'T', text: 'body' }, { call: async (o) => ((seen = o), { ok: true, text: '{"summary":"s"}' }) })
+  assert.equal(seen.system, EXTRACT_SYSTEM)
+  assert.match(seen.prompt, /UNTRUSTED CONTENT/)
+})
+
+test('yt-dlp is started without the user config file', async () => {
+  const calls = []
+  const exec = async (cmd, a) => (calls.push(a), { error: null, stdout: JSON.stringify({ title: 'V' }), stderr: '' })
+  await ytdlpInfo('https://youtu.be/x', { ytdlp: 'yt-dlp', transcriber: 't', exec })
+  assert.ok(calls.length >= 2 && calls.every((a) => a[0] === '--ignore-config'))
 })
 
 test('yt-dlp: never asked to download media; captions come from a temp folder that is removed', async () => {
@@ -194,10 +261,57 @@ test('splitMessage: nothing dropped, limit respected, fences closed and reopened
   assert.ok(DISCORD_MAX === 2000)
 })
 
-test('token is masked in anything logged', () => {
+test('token is masked in anything logged, also a secret that is not token-shaped', () => {
   const token = ['MTIzNDU2Nzg5MDEyMzQ1Njc4', 'GabcDE', 'abcdefghijklmnopqrstuvwxyz123456789'].join('.') // a fake, built at run time so secret scanners do not flag it
   assert.equal(maskSecrets(`Authorization: Bot ${token} failed`, [token]).includes(token), false)
   assert.equal(maskSecrets(`x ${token}`).includes('abcdefghijklmnop'), false)
+  assert.equal(maskSecrets('boom hunter2-plain-secret boom', ['hunter2-plain-secret']).includes('hunter2-plain-secret'), false)
+})
+
+test('button ids: only the exact shapes parse; look-alikes, traversal and overlong ids are refused', () => {
+  const ok = parseButtonId('bot:install:my-skill-1a2b3c4d:0123456789')
+  assert.deepEqual(ok, { action: 'install', id: 'my-skill-1a2b3c4d', hash: '0123456789' })
+  assert.deepEqual(parseButtonId('bot:discard:my-skill-1a2b3c4d'), { action: 'discard', id: 'my-skill-1a2b3c4d', hash: '' })
+  for (const bad of ['bot:install:my-skill', 'bot:install:my-skill:0123456789ab', 'bot:install:my-skill:012345678', 'bot:install:../x:0123456789', 'bot:install:a/b:0123456789', 'bot:install:My-Skill:0123456789', 'bot:install:a--b:0123456789', 'bot:install:-a:0123456789', 'bot:discard:a:0123456789', 'bot:install:a:0123456789\n', 'xbot:install:a:0123456789', 'bot:install:a:0123456789 ', 'bot:remove:a', `bot:install:${'a'.repeat(61)}:0123456789`, 'bot:install::0123456789', '']) assert.equal(parseButtonId(bad), null, JSON.stringify(bad))
+})
+
+test('heartbeat: a missing ack makes the next beat reconnect instead of beating into a dead socket', () => {
+  const log = []
+  const g = heartbeatGuard({ send: () => log.push('beat'), close: () => log.push('close') })
+  assert.equal(g.tick(), true)
+  g.ack()
+  assert.equal(g.tick(), true)
+  assert.equal(g.tick(), false)
+  assert.deepEqual(log, ['beat', 'beat', 'close'])
+})
+
+test('outbox: messages sent while reconnecting wait and go out in order; the queue is bounded', async () => {
+  const sent = []
+  const box = createOutbox({ deliver: async (x) => (sent.push(x), true), max: 3 })
+  const ps = [1, 2, 3, 4, 5].map((n) => box.enqueue(n))
+  assert.equal(sent.length, 0, 'not ready: nothing goes out')
+  assert.equal(box.size, 3)
+  assert.equal(await ps[0], false, 'the oldest were dropped past the bound')
+  assert.equal(await ps[1], false)
+  box.setReady(true)
+  assert.deepEqual(await Promise.all(ps.slice(2)), [true, true, true])
+  assert.deepEqual(sent, [3, 4, 5])
+  // A delivery that fails because the connection dropped is retried after the reconnect.
+  let release
+  const gate = new Promise((r) => (release = r))
+  let attempt = 0
+  const b2 = createOutbox({ deliver: async () => (++attempt === 1 ? gate : true) })
+  b2.setReady(true)
+  const p = b2.enqueue('a')
+  await new Promise((r) => setTimeout(r, 20))
+  b2.setReady(false) // the connection drops while the send is in flight...
+  release(false) // ...and the send fails
+  await new Promise((r) => setTimeout(r, 20))
+  b2.setReady(true) // after the reconnect it goes out again
+  assert.equal(await p, true)
+  assert.equal(attempt, 2)
+  b2.close()
+  assert.equal(await b2.enqueue('late'), false)
 })
 
 // ---------- end to end through the fake gateway ----------
@@ -212,23 +326,28 @@ const wait = async (fn, ms = 6000) => {
 }
 const readDir = (d) => (fs.existsSync(d) ? fs.readdirSync(d).filter((n) => n.endsWith('.json')).sort().map((n) => JSON.parse(fs.readFileSync(path.join(d, n), 'utf8'))) : [])
 
-function harness({ page } = {}) {
+function harness({ page, fetched = [], logs = [], onMessage } = {}) {
   const root = tmp()
   const fake = tmp()
   const skills = tmp()
   const log = path.join(tmp(), 'claude.log')
   const env = { ...process.env, ORCA_THEMER_ROOT: root, BOT_CLAUDE: FAKE_CLAUDE, BOT_SKILLS_DIR: skills, BOT_FAKE_LOG: log, BOT_YTDLP: 'off' }
-  const read = (url) => readLink(url, { env, lookup: publicLookup, fetchImpl: async () => new Response(page ?? '<title>P</title><p>readable page text</p>', { status: 200, headers: { 'content-type': 'text/html' } }) })
+  const read = (url) => readLink(url, { env, lookup: publicLookup, fetchImpl: async (u) => (fetched.push(u), new Response(typeof page === 'function' ? page(u) : (page ?? '<title>P</title><p>readable page text</p>'), { status: 200, headers: { 'content-type': 'text/html' } })) })
   const bot = createBot({ env, root, read })
-  const gw = createGateway({ cfg: { token: 'fake-token-value', ownerId: OWNER }, root, fakeDir: fake, ...bot })
+  const buttons = []
+  const gw = createGateway({ cfg: { token: 'fake-token-value', ownerId: OWNER }, root, fakeDir: fake, log: (m) => logs.push(m), ...bot, onMessage: onMessage ?? bot.onMessage, onButton: (...a) => (buttons.push(a), bot.onButton(...a)) })
   assert.equal(gw.start(), true)
   let n = 0
   const put = (o) => fs.writeFileSync(path.join(fake, 'in', `${String(++n).padStart(4, '0')}.json`), JSON.stringify(o))
   const dm = (content, id = OWNER) => put({ id: String(n + 1), content, author: { id } })
-  return { root, fake, skills, log, gw, dm, put, out: () => readDir(path.join(fake, 'out')), inter: () => readDir(path.join(fake, 'interactions')), stop: () => gw.stop() }
+  const press = (customId, user = OWNER) => put({ id: `i${n + 1}`, type: 3, token: `t${n + 1}`, user: { id: user }, data: { custom_id: customId } })
+  return { root, fake, skills, log, gw, dm, put, press, buttons, out: () => readDir(path.join(fake, 'out')), inter: () => readDir(path.join(fake, 'interactions')), stop: () => gw.stop() }
 }
+const draftsOf = (h) => (fs.existsSync(path.join(h.root, 'bot', 'skill-drafts')) ? fs.readdirSync(path.join(h.root, 'bot', 'skill-drafts')) : [])
+const buttonsOf = (h) => h.out().filter((o) => o.components).map((o) => o.components[0].components.map((c) => c.custom_id))
+const settle = (ms = 400) => new Promise((r) => setTimeout(r, ms))
 
-test('e2e: plain chat goes through claude; strangers get nothing; commands are registered', async () => {
+test('e2e: plain chat goes through claude; strangers get nothing; commands are registered for both install types', async () => {
   const h = harness()
   try {
     h.dm('hello there', '999999999999999999')
@@ -236,18 +355,21 @@ test('e2e: plain chat goes through claude; strangers get nothing; commands are r
     const out = await wait(() => (h.out().length ? h.out() : null))
     assert.match(out[0].content, /echo: User: hello there|echo: Assistant:/)
     assert.equal(out.every((o) => o.to === OWNER), true)
-    await new Promise((r) => setTimeout(r, 400))
+    await settle()
     assert.equal(h.out().length, 1, 'the stranger got no reply and triggered no claude call')
-    assert.deepEqual(readDir(path.join(h.fake, 'commands'))[0].commands.map((c) => c.name), ['notes', 'search'])
+    const cmds = readDir(path.join(h.fake, 'commands'))[0].commands
+    assert.deepEqual(cmds.map((c) => c.name), ['notes', 'search'])
+    assert.ok(cmds.every((c) => c.integration_types.includes(0) && c.integration_types.includes(1)))
     const calls = fs.readFileSync(h.log, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
     assert.equal(calls.length, 1)
-    assert.ok(calls[0].args.includes('--tools') && calls[0].args[calls[0].args.indexOf('--tools') + 1] === '', 'claude runs with no tools')
+    for (const flag of ['--strict-mcp-config', '--no-session-persistence']) assert.ok(calls[0].args.includes(flag), flag)
+    assert.equal(calls[0].args[calls[0].args.indexOf('--tools') + 1], '')
   } finally {
     h.stop()
   }
 })
 
-test('e2e: a link becomes a note; a skill draft is NOT installed until the button is pressed', async () => {
+test('e2e: a link becomes a note; a skill draft is NOT installed until the owner presses Install, and installs exactly what was shown', async () => {
   const h = harness({ page: '<title>P</title><p>MAKE-A-SKILL readable page text</p>' })
   try {
     h.dm('look https://example.com/post')
@@ -255,33 +377,77 @@ test('e2e: a link becomes a note; a skill draft is NOT installed until the butto
     const draftMsg = out.find((o) => o.components)
     assert.match(draftMsg.content, /caption-reader/)
     assert.match(draftMsg.content, /1\. Run the tool/)
-    const ids = draftMsg.components[0].components.map((c) => c.custom_id)
-    assert.deepEqual(ids, ['bot:install:caption-reader', 'bot:discard:caption-reader'])
+    const [install, discard] = draftMsg.components[0].components.map((c) => c.custom_id)
+    const m = /^bot:install:(caption-reader-[0-9a-f]{8}):([0-9a-f]{10})$/.exec(install)
+    assert.ok(m, install)
+    assert.equal(discard, `bot:discard:${m[1]}`)
     assert.equal(listNotes(h.root).length, 1)
-    assert.ok(fs.existsSync(path.join(h.root, 'bot', 'skill-drafts', 'caption-reader', 'SKILL.md')))
+    assert.ok(fs.existsSync(path.join(h.root, 'bot', 'skill-drafts', m[1], 'SKILL.md')))
     assert.deepEqual(fs.readdirSync(h.skills), [], 'nothing installed yet')
 
-    // A stranger pressing the button changes nothing.
-    h.put({ id: '1', type: 3, token: 't1', user: { id: '999999999999999999' }, data: { custom_id: ids[0] } })
+    h.press(install, '999999999999999999') // a stranger pressing it changes nothing
     await wait(() => h.inter().length)
+    await settle()
     assert.deepEqual(fs.readdirSync(h.skills), [])
+    assert.equal(h.buttons.length, 0)
 
-    h.put({ id: '2', type: 3, token: 't2', user: { id: OWNER }, data: { custom_id: ids[0] } })
+    h.press(install)
     await wait(() => fs.existsSync(path.join(h.skills, 'caption-reader', 'SKILL.md')))
-    assert.match(fs.readFileSync(path.join(h.skills, 'caption-reader', 'SKILL.md'), 'utf8'), /^---\nname: caption-reader\n/)
+    const installed = fs.readFileSync(path.join(h.skills, 'caption-reader', 'SKILL.md'), 'utf8')
+    assert.match(installed, /^---\nname: caption-reader\n/)
+    assert.ok(draftMsg.content.includes(installed.trim().split('\n')[1]), 'the text installed is the text shown')
+    assert.deepEqual(draftsOf(h), [], 'the draft is consumed')
+
+    // Replay: pressing Install again does nothing more.
+    fs.rmSync(path.join(h.skills, 'caption-reader'), { recursive: true })
+    h.press(install)
+    await wait(() => h.buttons.length >= 2)
+    await settle()
+    assert.deepEqual(fs.readdirSync(h.skills), [], 'a used button can never install again')
   } finally {
     h.stop()
   }
 })
 
-test('e2e: Discard removes the draft and installs nothing; /notes and /search answer only the owner', async () => {
+test('e2e: two drafts with the same name never overwrite each other; each button installs its own text', async () => {
+  let n = 0
+  const h = harness({ page: () => `<title>P</title><p>MAKE-A-SKILL version ${++n}</p>` })
+  try {
+    h.dm('https://example.com/one')
+    await wait(() => buttonsOf(h).length >= 1)
+    h.dm('https://example.com/two')
+    await wait(() => buttonsOf(h).length >= 2)
+    const [first, second] = buttonsOf(h)
+    assert.notEqual(first[0], second[0])
+    assert.equal(draftsOf(h).length, 2, 'both drafts exist side by side')
+    // Same name and description here, so make the second one differ and check the first button still means the first text.
+    fs.appendFileSync(path.join(h.root, 'bot', 'skill-drafts', parseButtonId(second[0]).id, 'SKILL.md'), '\nTAMPERED\n')
+    h.press(second[0])
+    await wait(() => h.buttons.length >= 1)
+    await settle()
+    assert.deepEqual(fs.readdirSync(h.skills), [], 'an edited draft does not match the hash that was shown')
+    h.press(first[0])
+    await wait(() => fs.existsSync(path.join(h.skills, 'caption-reader', 'SKILL.md')))
+    const got = fs.readFileSync(path.join(h.skills, 'caption-reader', 'SKILL.md'), 'utf8')
+    assert.ok(got.includes('v1') && !got.includes('v2') && !got.includes('TAMPERED'), 'the first button installs the first text')
+  } finally {
+    h.stop()
+  }
+})
+
+test('e2e: Discard removes the draft, a discarded id can never install; /notes and /search answer only the owner', async () => {
   const h = harness({ page: '<title>P</title><p>MAKE-A-SKILL zebra</p>' })
   try {
     h.dm('https://example.com/z')
-    await wait(() => h.out().some((o) => o.components))
-    h.put({ id: '3', type: 3, token: 't3', user: { id: OWNER }, data: { custom_id: 'bot:discard:caption-reader' } })
-    await wait(() => !fs.existsSync(path.join(h.root, 'bot', 'skill-drafts', 'caption-reader')))
+    await wait(() => buttonsOf(h).length)
+    const [install, discard] = buttonsOf(h)[0]
+    h.press(discard)
+    await wait(() => draftsOf(h).length === 0)
     assert.deepEqual(fs.readdirSync(h.skills), [])
+    h.press(install)
+    await wait(() => h.buttons.length >= 2)
+    await settle()
+    assert.deepEqual(fs.readdirSync(h.skills), [], 'Install after Discard installs nothing')
     h.put({ id: '4', type: 2, token: 't4', user: { id: OWNER }, data: { name: 'search', options: [{ name: 'q', value: 'summary' }] } })
     const r = await wait(() => h.inter().find((i) => i.data?.content?.includes('Fake title')))
     assert.equal(r.data.flags, 64, 'private reply')
@@ -293,24 +459,78 @@ test('e2e: Discard removes the draft and installs nothing; /notes and /search an
   }
 })
 
-test('e2e: more than 5 links reads 5; a private link is refused without being fetched', async () => {
-  const h = harness()
+test('e2e: look-alike button ids never reach the handler', async () => {
+  const h = harness({ page: '<title>P</title><p>MAKE-A-SKILL x</p>' })
   try {
-    h.dm(Array.from({ length: 7 }, (_, i) => `https://example.com/${i}`).join(' ') + ' http://127.0.0.1:9/admin')
-    await wait(() => h.out().filter((o) => /^Reading /.test(o.content)).length >= 5)
-    await new Promise((r) => setTimeout(r, 300))
-    assert.equal(h.out().filter((o) => /^Reading /.test(o.content)).length, 5)
-    assert.ok(h.out().some((o) => /Only the first 5 links/.test(o.content)))
+    h.dm('https://example.com/z')
+    await wait(() => buttonsOf(h).length)
+    const [install] = buttonsOf(h)[0]
+    const { id, hash } = parseButtonId(install)
+    const bad = [`${install}x`, `${install}\n`, `bot:install:${id}`, `bot:install:${id}:${hash}0`, `bot:install:../${id}:${hash}`, `bot:install:${id.toUpperCase()}:${hash}`, `bot:discard:${id}:${hash}`, `bot:install:${id}:${hash.toUpperCase()}`]
+    for (const b of bad) h.press(b)
+    await wait(() => h.inter().length >= bad.length)
+    await settle()
+    assert.equal(h.buttons.length, 0, 'none of them was passed on')
+    assert.deepEqual(fs.readdirSync(h.skills), [])
+    assert.equal(draftsOf(h).length, 1)
   } finally {
     h.stop()
   }
 })
 
-test('installDraft: refuses to overwrite and rejects path-shaped names', () => {
+test('e2e: the 5-link cap counts in order; a private link inside the first five is refused without being fetched', async () => {
+  const fetched = []
+  const h = harness({ fetched })
+  try {
+    const links = ['https://example.com/1', 'http://127.0.0.1:9/admin', 'https://example.com/2', 'https://example.com/3', 'https://example.com/4', 'https://example.com/5', 'https://example.com/6']
+    h.dm(links.join(' '))
+    await wait(() => h.out().filter((o) => /^Reading /.test(o.content)).length >= 5 && h.out().some((o) => /refused/.test(o.content)))
+    await settle(600)
+    const reading = h.out().filter((o) => /^Reading /.test(o.content)).map((o) => o.content)
+    assert.equal(reading.length, 5)
+    assert.ok(reading.some((r) => r.includes('127.0.0.1')))
+    assert.ok(h.out().some((o) => /refused \(private address\)/.test(o.content) && o.content.includes('127.0.0.1')))
+    assert.ok(h.out().some((o) => /Only the first 5 links/.test(o.content) && /2 more/.test(o.content)))
+    assert.deepEqual(fetched, ['https://example.com/1', 'https://example.com/2', 'https://example.com/3', 'https://example.com/4'], 'the private address was never requested and links 6 and 7 were skipped')
+  } finally {
+    h.stop()
+  }
+})
+
+test('the bot token (even a plain-looking one) never reaches the log', async () => {
+  const logs = []
+  const h = harness({ logs, onMessage: async () => { throw new Error('boom fake-token-value boom') } })
+  try {
+    h.dm('anything')
+    await wait(() => logs.some((l) => l.includes('message failed')))
+    assert.equal(logs.join('\n').includes('fake-token-value'), false)
+  } finally {
+    h.stop()
+  }
+})
+
+test('installDraft: path-shaped ids, wrong hashes, edited text and existing skills are refused', () => {
   const root = tmp()
   const skills = tmp()
-  saveDraft(root, { name: 'abc', description: 'd', body: 'b' }, 'https://x.example')
-  assert.equal(installDraft(root, 'abc', skills).ok, true)
-  assert.equal(installDraft(root, 'abc', skills).ok, false)
-  assert.equal(installDraft(root, '../abc', skills).ok, false)
+  const d = saveDraft(root, { name: 'abc', description: 'd', body: 'b' }, 'https://x.example')
+  const h10 = d.hash.slice(0, 10)
+  // A well-formed draft that lives outside skill-drafts must not be reachable through a traversal id.
+  const evil = path.join(root, 'bot', 'evil')
+  fs.mkdirSync(evil, { recursive: true })
+  fs.copyFileSync(d.file, path.join(evil, 'SKILL.md'))
+  fs.writeFileSync(path.join(evil, 'draft.json'), JSON.stringify({ name: 'evil', hash: d.hash }))
+  for (const id of ['../evil', '..', '.', 'a/b', 'a\\b', '', 'ABC', `${'a'.repeat(61)}`]) assert.equal(installDraft(root, id, h10, skills).ok, false, JSON.stringify(id))
+  assert.deepEqual(fs.readdirSync(skills), [])
+  assert.equal(installDraft(root, d.id, '0000000000', skills).ok, false, 'wrong hash')
+  assert.equal(installDraft(root, d.id, 'xyz', skills).ok, false, 'malformed hash')
+  fs.mkdirSync(path.join(skills, 'abc'))
+  assert.equal(installDraft(root, d.id, h10, skills).ok, false, 'existing skill is not overwritten')
+  fs.rmdirSync(path.join(skills, 'abc'))
+  assert.equal(installDraft(root, d.id, h10, skills).ok, true)
+  assert.equal(installDraft(root, d.id, h10, skills).ok, false, 'replay')
+  // Two drafts of one name never share a folder.
+  const a = saveDraft(root, { name: 'same', description: 'd', body: 'one' }, 'https://x.example')
+  const b = saveDraft(root, { name: 'same', description: 'd', body: 'two' }, 'https://x.example')
+  assert.notEqual(a.id, b.id)
+  assert.match(fs.readFileSync(a.file, 'utf8'), /one/)
 })

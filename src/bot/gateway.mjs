@@ -51,24 +51,109 @@ export function isOwnerDm(msg, ownerId) {
 export const interactionUser = (d) => String(d?.user?.id ?? d?.member?.user?.id ?? '')
 
 /** A row of Install / Discard buttons for a skill draft. */
-export const draftButtons = (name) => [
+/** The only custom_id shapes the bot accepts: bot:install:<draft id>:<10 hex of the shown text's hash>, bot:discard:<draft id>. */
+export const BUTTON_ID = /^bot:(install|discard):([a-z0-9]+(?:-[a-z0-9]+)*)(?::([0-9a-f]{10}))?$/
+export const draftButtons = (id, hash10) => [
   { type: 1, components: [
-    { type: 2, style: 3, label: 'Install skill', custom_id: `bot:install:${name}` },
-    { type: 2, style: 4, label: 'Discard', custom_id: `bot:discard:${name}` }
+    { type: 2, style: 3, label: 'Install skill', custom_id: `bot:install:${id}:${hash10}` },
+    { type: 2, style: 4, label: 'Discard', custom_id: `bot:discard:${id}` }
   ] }
 ]
+/** Parses a button's custom_id -> { action, id, hash } or null (anything else, however close, is refused). */
+export function parseButtonId(customId) {
+  const s = String(customId ?? '')
+  const m = s.length <= 100 ? BUTTON_ID.exec(s) : null
+  if (!m || m[2].length > 60) return null
+  if (m[1] === 'install' ? !m[3] : m[3]) return null
+  return { action: m[1], id: m[2], hash: m[3] ?? '' }
+}
+
+/**
+ * Heartbeat bookkeeping: each beat needs the previous one acknowledged (op 11). When it was not, close()
+ * is called (the caller reconnects and resumes) instead of beating into a dead socket.
+ */
+export function heartbeatGuard({ send, close }) {
+  let acked = true
+  return {
+    tick() {
+      if (!acked) {
+        close()
+        return false
+      }
+      acked = false
+      send()
+      return true
+    },
+    ack() {
+      acked = true
+    }
+  }
+}
+
+/**
+ * An ordered, bounded outbox. While not ready (reconnecting) items wait, up to `max` (the oldest is dropped
+ * past that); setReady(true) delivers them in order. deliver(item) -> Promise<boolean>. close() drops the rest.
+ */
+export function createOutbox({ deliver, max = 50 }) {
+  const q = []
+  let ready = false
+  let closed = false
+  let flushing = false
+  async function flush() {
+    if (flushing) return
+    flushing = true
+    try {
+      while (ready && !closed && q.length) {
+        const it = q.shift()
+        let ok = false
+        try {
+          ok = await deliver(it.item)
+        } catch {}
+        if (!ok && !ready && !closed) {
+          q.unshift(it) // the connection went away under it: try again after the reconnect
+          break
+        }
+        it.resolve(ok)
+      }
+    } finally {
+      flushing = false
+    }
+  }
+  return {
+    enqueue(item) {
+      if (closed) return Promise.resolve(false)
+      return new Promise((resolve) => {
+        q.push({ item, resolve })
+        while (q.length > max) q.shift().resolve(false)
+        flush()
+      })
+    },
+    setReady(v) {
+      ready = !!v
+      if (ready) flush()
+    },
+    close() {
+      closed = true
+      ready = false
+      for (const it of q.splice(0)) it.resolve(false)
+    },
+    get size() {
+      return q.length
+    }
+  }
+}
 
 /** The commands the bot registers. */
 export const SLASH_COMMANDS = Object.freeze([
-  { name: 'notes', description: 'List the latest saved notes', type: 1, contexts: [1], integration_types: [1] },
-  { name: 'search', description: 'Search the saved notes', type: 1, contexts: [1], integration_types: [1], options: [{ type: 3, name: 'q', description: 'Text to look for', required: true, max_length: 200 }] }
+  { name: 'notes', description: 'List the latest saved notes', type: 1, contexts: [1, 2], integration_types: [0, 1] },
+  { name: 'search', description: 'Search the saved notes', type: 1, contexts: [1, 2], integration_types: [0, 1], options: [{ type: 3, name: 'q', description: 'Text to look for', required: true, max_length: 200 }] }
 ])
 
 /**
  * @param {{ cfg: {token:string, ownerId:string}, root: string, log?: Function, fakeDir?: string,
  *   onMessage: (text: string, send: (t: string, components?: any[]) => Promise<any>) => Promise<void>,
  *   onSlash: (name: string, args: Record<string,string>) => Promise<string>,
- *   onButton: (action: string, arg: string) => Promise<string> }} o
+ *   onButton: (action: string, id: string, hash: string) => Promise<string> }} o
  */
 export function createGateway({ cfg, root, log = () => {}, fakeDir = '', onMessage, onSlash, onButton }) {
   const lockFile = path.join(root, 'bot', 'bot.lock')
@@ -117,25 +202,30 @@ export function createGateway({ cfg, root, log = () => {}, fakeDir = '', onMessa
     await rest('POST', `/channels/${dmChannel}/messages`, { ...payload, allowed_mentions: { parse: [] } })
   }
 
-  let sending = Promise.resolve()
+  // Everything the bot says goes through one ordered outbox; while the gateway reconnects it waits (bounded).
+  const outbox = createOutbox({
+    deliver: async (payload) => {
+      try {
+        await post(payload)
+        return true
+      } catch (e) {
+        say('send failed', e.message)
+        return false
+      }
+    }
+  })
   /** A message to the owner (never anyone else); long text goes out as several messages, buttons on the last. */
   function send(text, components = null) {
     const parts = splitMessage(text, DISCORD_MAX)
-    if (!parts.length || stopped || state !== 'connected') return Promise.resolve(false)
+    if (!parts.length || stopped) return Promise.resolve(false)
     const shown = parts.slice(0, MAX_PARTS)
-    const run = sending.then(async () => {
-      for (let i = 0; i < shown.length; i++) {
-        try {
-          await post({ content: shown[i], ...(components && i === shown.length - 1 ? { components } : {}) })
-        } catch (e) {
-          say('send failed', e.message)
-          return false
-        }
-      }
-      return true
-    })
-    sending = run.catch(() => {})
-    return run
+    return Promise.all(shown.map((p, i) => outbox.enqueue({ content: p, ...(components && i === shown.length - 1 ? { components } : {}) }))).then((r) => r.every(Boolean))
+  }
+  const setState = (v) => {
+    state = v
+    if (v === 'connected') outbox.setReady(true)
+    else if (v === 'starting') outbox.setReady(false)
+    else outbox.close()
   }
   const typing = () => (fakeDir || state !== 'connected' || !dmChannel ? null : rest('POST', `/channels/${dmChannel}/typing`).catch(() => {}))
 
@@ -173,11 +263,11 @@ export function createGateway({ cfg, root, log = () => {}, fakeDir = '', onMessa
         return void (await respond(d, { type: 4, data: { flags: 64, content: String(text).slice(0, 1900) } }))
       }
       if (d.type === 3) {
-        const m = /^bot:(install|discard):([a-z0-9-]{1,48})$/.exec(String(d.data?.custom_id ?? ''))
+        const m = parseButtonId(d.data?.custom_id)
         if (!m) return void (await respond(d, { type: 6 }))
         // The buttons go away at once so a second press does nothing; then the work, then the result.
         await respond(d, { type: 7, data: { components: [] } })
-        const text = await onButton(m[1], m[2])
+        const text = await onButton(m.action, m.id, m.hash)
         await send(text)
       }
     } catch (e) {
@@ -204,6 +294,8 @@ export function createGateway({ cfg, root, log = () => {}, fakeDir = '', onMessa
       const stall = setTimeout(() => state !== 'connected' && sock.readyState < 2 && sock.close(), 60000)
       sock.addEventListener('close', () => clearTimeout(stall))
       const hb = () => sock.readyState === 1 && sock.send(JSON.stringify({ op: 1, d: seq }))
+      let guard = null
+      let jitter = 0
       sock.onmessage = (ev) => {
         let p
         try {
@@ -214,11 +306,14 @@ export function createGateway({ cfg, root, log = () => {}, fakeDir = '', onMessa
         if (p.s != null) seq = p.s
         if (p.op === 10) {
           clearInterval(beat)
-          setTimeout(hb, Math.random() * p.d.heartbeat_interval)
-          beat = setInterval(hb, p.d.heartbeat_interval)
+          clearTimeout(jitter)
+          guard = heartbeatGuard({ send: hb, close: () => say('no heartbeat ack; reconnecting') || sock.close(4902, 'no heartbeat ack') })
+          jitter = setTimeout(() => guard.tick(), Math.random() * p.d.heartbeat_interval)
+          beat = setInterval(() => guard.tick(), p.d.heartbeat_interval)
           if (resume) sock.send(JSON.stringify({ op: 6, d: { token: cfg.token, session_id: resume.id, seq } }))
           else sock.send(JSON.stringify({ op: 2, d: { token: cfg.token, intents: INTENTS, properties: { os: process.platform, browser: 'orca-companion-kit', device: 'orca-companion-kit' } } }))
-        } else if (p.op === 1) hb()
+        } else if (p.op === 11) guard?.ack()
+        else if (p.op === 1) hb()
         else if (p.op === 7) sock.close(4900, 'reconnect')
         else if (p.op === 9) {
           if (!p.d) session = null
@@ -227,24 +322,25 @@ export function createGateway({ cfg, root, log = () => {}, fakeDir = '', onMessa
           if (p.t === 'READY') {
             session = { id: p.d.session_id, url: p.d.resume_gateway_url }
             appId = String(p.d.application?.id ?? '')
-            state = 'connected'
+            setState('connected')
             backoff = 2000
             say('connected')
             registerCommands()
-          } else if (p.t === 'RESUMED') state = 'connected'
+          } else if (p.t === 'RESUMED') setState('connected')
           else if (p.t === 'MESSAGE_CREATE') handle(p.d)
           else if (p.t === 'INTERACTION_CREATE') handleInteraction(p.d)
         }
       }
       sock.onclose = (ev) => {
         clearInterval(beat)
+        clearTimeout(jitter)
         ws = null
         if (stopped) return
-        if (ev.code === 4004) return void ((state = 'bad-token'), say('token rejected (4004); bot off'))
-        if (ev.code === 4014 || ev.code === 4013) return void ((state = 'intents'), say(`intents not allowed (${ev.code}); switch on Message Content Intent in the developer portal`))
-        if ([4010, 4011, 4012].includes(ev.code)) return void ((state = 'error'), say(`closed ${ev.code}; bot off`))
-        if (state === 'connected') state = 'starting'
-        if (![4900, 4901, 1000].includes(ev.code)) session = null
+        if (ev.code === 4004) return void (setState('bad-token'), say('token rejected (4004); bot off'))
+        if (ev.code === 4014 || ev.code === 4013) return void (setState('intents'), say(`intents not allowed (${ev.code}); switch on Message Content Intent in the developer portal`))
+        if ([4010, 4011, 4012].includes(ev.code)) return void (setState('error'), say(`closed ${ev.code}; bot off`))
+        if (state === 'connected') setState('starting')
+        if (![4900, 4901, 4902, 1000].includes(ev.code)) session = null
         setTimeout(connect, backoff)
         backoff = Math.min(60000, backoff * 2)
       }
@@ -252,7 +348,7 @@ export function createGateway({ cfg, root, log = () => {}, fakeDir = '', onMessa
     }
     open().catch((e) => {
       say('connect failed', e.message)
-      if (/-> 401/.test(e.message)) return void (state = 'bad-token')
+      if (/-> 401/.test(e.message)) return void setState('bad-token')
       setTimeout(connect, backoff)
       backoff = Math.min(60000, backoff * 2)
     })
@@ -261,7 +357,7 @@ export function createGateway({ cfg, root, log = () => {}, fakeDir = '', onMessa
   function startFake() {
     const inbox = path.join(fakeDir, 'in')
     fs.mkdirSync(inbox, { recursive: true })
-    state = 'connected'
+    setState('connected')
     appId = '100000000000000001'
     say('fake gateway on')
     registerCommands()
@@ -294,6 +390,7 @@ export function createGateway({ cfg, root, log = () => {}, fakeDir = '', onMessa
     },
     stop() {
       stopped = true
+      outbox.close()
       clearInterval(beat)
       clearInterval(fakeTimer)
       try {
