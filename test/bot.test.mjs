@@ -94,7 +94,7 @@ test('page parsing: meta tags, visible text, captions', () => {
 
 test('page parsing stays linear on adversarial input (1.5 MB under 200 ms each)', () => {
   const MB = 1_500_000
-  const cases = ['<meta '.repeat(MB / 6), '<'.repeat(MB), '<script>'.repeat(MB / 8), '<!--'.repeat(MB / 4), '&'.repeat(MB), '<a '.repeat(MB / 3), '\n '.repeat(MB / 2), '<p>x</p>'.repeat(MB / 8), '<p>'.repeat(MB / 3), ' \t'.repeat(MB / 2) + 'x', '<meta content="'.repeat(MB / 15)]
+  const cases = ['<meta '.repeat(MB / 6), '<'.repeat(MB), '<script>'.repeat(MB / 8), '<!--'.repeat(MB / 4), '&'.repeat(MB), '<a '.repeat(MB / 3), '\n '.repeat(MB / 2), '<p>x</p>'.repeat(MB / 8), '<p>'.repeat(MB / 3), ' \t'.repeat(MB / 2) + 'x', '<meta content="'.repeat(MB / 15), '<'.repeat(999999) + '>', '<a '.repeat(333333) + '>', '<'.repeat(MB) + '>', '<a '.repeat(MB / 3) + '>', '<p '.repeat(MB / 3) + '>']
   for (const html of cases) {
     // Best of three: the suite runs many test files in parallel, so one run can be slowed by other processes;
     // a quadratic scan would take seconds on every run.
@@ -108,6 +108,8 @@ test('page parsing stays linear on adversarial input (1.5 MB under 200 ms each)'
     assert.ok(best < 200, `${html.slice(0, 12).replace(/\n/g, '~')} took ${best} ms`)
   }
   assert.equal(htmlToText('<p>Hello</p><script>evil()</script><P>World &amp; co</P><!-- c -->a<br>b'), 'Hello\nWorld & co\na\nb')
+  // A "tag" longer than the limit is not swallowed as markup: its text stays (this is what the MAX_TAG guard does).
+  assert.ok(htmlToText('<' + 'x'.repeat(5000) + '> visible').includes('x'.repeat(5000)))
 })
 
 test('readLink: Threads uses the ordinary browser identity by default; the crawler identity is opt-in', async () => {
@@ -143,8 +145,8 @@ test('readLink: a host that resolves to a private address is refused before yt-d
 })
 
 test('SSRF: IPv4-compatible, 6to4, Teredo and site-local IPv6 forms are refused', () => {
-  for (const ip of ['::7f00:1', '::127.0.0.1', '::a00:1', '2002:7f00:1::1', '2002:c0a8:101::', '2002:a9fe:a9fe::', '2001:0:4136:e378:8000:63bf:3fff:fdd2', 'fec0::1', 'feff::1', '64:ff9b::7f00:1']) assert.equal(isPrivateIp(ip), true, ip)
-  for (const ip of ['2002:5db8:d822::1', '2606:4700::1111', '::ffff:8.8.8.8']) assert.equal(isPrivateIp(ip), false, ip)
+  for (const ip of ['::7f00:1', '::127.0.0.1', '::a00:1', '2002:7f00:1::1', '2002:c0a8:101::', '2002:a9fe:a9fe::', '2001:0:4136:e378:8000:63bf:3fff:fdd2', 'fec0::1', 'feff::1', '64:ff9b::7f00:1', '::ffff:0:7f00:1', '::ffff:0:a00:1', '::ffff:0:c0a8:101', '100::1', '2001:db8::1']) assert.equal(isPrivateIp(ip), true, ip)
+  for (const ip of ['2002:5db8:d822::1', '2606:4700::1111', '::ffff:8.8.8.8', '::ffff:0:808:808']) assert.equal(isPrivateIp(ip), false, ip)
 })
 
 test('claude is started as a plain completion: no tools, no MCP, no settings or hooks, nothing auto-approved', () => {

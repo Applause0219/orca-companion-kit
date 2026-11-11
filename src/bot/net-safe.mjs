@@ -40,6 +40,9 @@ export function isPrivateIp(ip) {
     const v4 = (a, b) => `${a >> 8}.${a & 255}.${b >> 8}.${b & 255}`
     if (g.slice(0, 7).every((x) => x === 0) && g[7] <= 1) return true // :: and ::1
     if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) return isPrivateIp(v4(g[6], g[7])) // ::ffff:a.b.c.d
+    if (g.slice(0, 4).every((x) => x === 0) && g[4] === 0xffff && g[5] === 0) return isPrivateIp(v4(g[6], g[7])) // ::ffff:0:a.b.c.d (SIIT translated form)
+    if (g[0] === 0x100 && g[1] === 0 && g[2] === 0 && g[3] === 0) return true // 100::/64 discard-only
+    if (g[0] === 0x2001 && g[1] === 0xdb8) return true // 2001:db8::/32 documentation
     if (g.slice(0, 6).every((x) => x === 0)) return true // IPv4-compatible ::a.b.c.d (deprecated)
     if (g[0] === 0x2002) return isPrivateIp(v4(g[1], g[2])) // 6to4: judge the embedded IPv4
     if (g[0] === 0x2001 && g[1] === 0) return true // Teredo 2001::/32

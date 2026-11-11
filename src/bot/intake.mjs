@@ -69,6 +69,7 @@ export function htmlToText(html) {
   const low = lowerAscii(src)
   let out = ''
   let pos = 0
+  let gtAt = -2
   while (pos < src.length) {
     const lt = src.indexOf('<', pos)
     if (lt < 0) {
@@ -82,11 +83,17 @@ export function htmlToText(html) {
       pos = e + 3
       continue
     }
-    const gt = src.indexOf('>', lt)
+    // The next '>' is searched for once: while it is still ahead of this '<' it is reused, so a run of '<'
+    // with no '>' (or one far away) cannot make the scan quadratic.
+    if (gtAt < lt) gtAt = src.indexOf('>', lt)
+    const gt = gtAt
     if (gt < 0) break
     if (gt - lt > MAX_TAG) {
-      pos = lt + 1
-      out += ' '
+      // Too long to be a tag: its '<' is plain text. Every '<' before gt - MAX_TAG is in the same situation,
+      // so they are all passed over in one step instead of one loop turn each.
+      const limit = gt - MAX_TAG
+      out += src.slice(lt, limit) // a stray '<' is literal text
+      pos = limit
       continue
     }
     let k = lt + 1
@@ -120,6 +127,7 @@ export function htmlToText(html) {
 
 /** Collapses whitespace in one pass: runs of blanks become one space, runs containing a line break become one "\n". */
 function squeeze(s) {
+  if (!/[\t\n\v\f\r ]|  /.test(s)) return s.trim() // already single spaces only
   const res = []
   let pend = '' // '' | ' ' | '\n'
   let started = false
