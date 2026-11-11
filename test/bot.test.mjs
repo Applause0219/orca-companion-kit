@@ -118,15 +118,17 @@ test('readLink: Threads uses the ordinary browser identity by default; the crawl
     ua = opts.headers['User-Agent']
     return new Response('<meta property="og:title" content="A on Threads"><meta property="og:description" content="post text">', { status: 200, headers: { 'content-type': 'text/html' } })
   }
-  const r = await readLink('https://www.threads.com/@a/post/b', { env: {}, fetchImpl, lookup: publicLookup })
+  const browserRead = async () => ({ ok: false, why: 'browser reading is off (BOT_BROWSER=off)' })
+  const r = await readLink('https://www.threads.com/@a/post/bbb', { env: {}, fetchImpl, lookup: publicLookup, browserRead })
   assert.equal(r.source, 'og-meta')
   assert.equal(r.text, 'post text')
   assert.match(ua, /Mozilla/)
   assert.doesNotMatch(ua, /facebookexternalhit/)
   assert.match(r.limits.join(' '), /login-walled/)
-  await readLink('https://www.threads.com/@a/post/b', { env: { BOT_SOCIAL_UA: 'crawler' }, fetchImpl, lookup: publicLookup })
+  assert.match(r.limits.join(' '), /browser: browser reading is off/, 'the reason the browser was not used reaches the note')
+  await readLink('https://www.threads.com/@a/post/bbb', { env: { BOT_SOCIAL_UA: 'crawler' }, fetchImpl, lookup: publicLookup, browserRead })
   assert.match(ua, /facebookexternalhit/)
-  await readLink('https://www.threads.com/@a/post/b', { env: { BOT_SOCIAL_UA: 'MyAgent/1' }, fetchImpl, lookup: publicLookup })
+  await readLink('https://www.threads.com/@a/post/bbb', { env: { BOT_SOCIAL_UA: 'MyAgent/1' }, fetchImpl, lookup: publicLookup, browserRead })
   assert.equal(ua, 'MyAgent/1')
   await readLink('https://example.com/', { env: { BOT_SOCIAL_UA: 'crawler' }, fetchImpl, lookup: publicLookup })
   assert.match(ua, /Mozilla/, 'the opt-in applies to Threads and Instagram only')
@@ -350,13 +352,13 @@ const wait = async (fn, ms = 6000) => {
 }
 const readDir = (d) => (fs.existsSync(d) ? fs.readdirSync(d).filter((n) => n.endsWith('.json')).sort().map((n) => JSON.parse(fs.readFileSync(path.join(d, n), 'utf8'))) : [])
 
-function harness({ page, fetched = [], logs = [], onMessage } = {}) {
+function harness({ page, fetched = [], logs = [], onMessage, browserRead = async () => ({ ok: false, why: 'no browser in tests' }) } = {}) {
   const root = tmp()
   const fake = tmp()
   const skills = tmp()
   const log = path.join(tmp(), 'claude.log')
   const env = { ...process.env, ORCA_THEMER_ROOT: root, BOT_CLAUDE: FAKE_CLAUDE, BOT_SKILLS_DIR: skills, BOT_FAKE_LOG: log, BOT_YTDLP: 'off' }
-  const read = (url) => readLink(url, { env, lookup: publicLookup, fetchImpl: async (u) => (fetched.push(u), new Response(typeof page === 'function' ? page(u) : (page ?? '<title>P</title><p>readable page text</p>'), { status: 200, headers: { 'content-type': 'text/html' } })) })
+  const read = (url) => readLink(url, { env, lookup: publicLookup, browserRead, fetchImpl: async (u) => (fetched.push(u), new Response(typeof page === 'function' ? page(u) : (page ?? '<title>P</title><p>readable page text</p>'), { status: 200, headers: { 'content-type': 'text/html' } })) })
   const bot = createBot({ env, root, read })
   const buttons = []
   const gw = createGateway({ cfg: { token: 'fake-token-value', ownerId: OWNER }, root, fakeDir: fake, log: (m) => logs.push(m), ...bot, onMessage: onMessage ?? bot.onMessage, onButton: (...a) => (buttons.push(a), bot.onButton(...a)) })
@@ -497,6 +499,27 @@ test('e2e: look-alike button ids never reach the handler', async () => {
     assert.equal(h.buttons.length, 0, 'none of them was passed on')
     assert.deepEqual(fs.readdirSync(h.skills), [])
     assert.equal(draftsOf(h).length, 1)
+  } finally {
+    h.stop()
+  }
+})
+
+test('e2e: a Threads link is read in the browser, framed as untrusted data, and saved as a note that says how it was read', async () => {
+  const fetched = []
+  const seen = []
+  const browserRead = async (url) => (seen.push(url), { ok: true, title: 'someone_tw on Threads', text: 'THREADS-POST-BODY reply one', finalUrl: url })
+  const h = harness({ fetched, browserRead })
+  try {
+    h.dm('read this https://www.threads.com/@someone_tw/post/AbC123xyz')
+    await wait(() => listNotes(h.root).length)
+    await wait(() => h.out().some((o) => /logged-out browser/.test(o.content ?? '')))
+    assert.deepEqual(seen, ['https://www.threads.com/@someone_tw/post/AbC123xyz'])
+    assert.deepEqual(fetched, [], 'no plain fetch when the browser read it')
+    const prompt = fs.readFileSync(h.log, 'utf8')
+    assert.match(prompt, /BEGIN UNTRUSTED CONTENT[\s\S]*THREADS-POST-BODY[\s\S]*END UNTRUSTED CONTENT/, 'the post reaches claude only inside the untrusted block')
+    const note = fs.readFileSync(path.join(h.root, 'bot', 'notes', listNotes(h.root)[0].name), 'utf8')
+    assert.match(note, /Kind: threads \(read through browser\)/)
+    assert.match(note, /images and video were not read/)
   } finally {
     h.stop()
   }

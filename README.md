@@ -110,7 +110,7 @@ agent 會先問你幾件事：參考圖、配色、角色個性、招牌動作�
 
 選配、和 Orca 外觀無關，可以單獨跑（`npm run bot`，不需要開 Orca）。一個只跟你私訊的 Discord 機器人：貼 Instagram Reels、Threads、YouTube 或一般網頁的連結，它用你自己的 `claude -p` 讀內容、摘要，把裡面的工具和技巧記成筆記（`~/.orca/themer/bot/notes/`），可重複使用的做法存成 skill 草稿，**按下 Install 按鈕才會安裝**，不會自動寫進 `~/.claude/skills`。內容一律當不可信資料處理，不下載影片或音訊。
 
-Threads、Instagram 沒登入時只拿得到公開的預覽文字，影片內容讀不到；每個平台實際讀得到什麼、讀不到什麼，寫在 [docs/discord-bot.md](docs/discord-bot.md)，那裡也有建立應用程式、開 intents、邀請和執行的步驟。
+Threads 貼文會用沒登入的 Chrome 讀（只讀不寫，請求白名單由程式碼把關；不想要就設 `BOT_BROWSER=off`），Instagram 沒登入時只拿得到公開的預覽文字，影片內容讀不到；每個平台實際讀得到什麼、讀不到什麼，寫在 [docs/discord-bot.md](docs/discord-bot.md)，那裡也有建立應用程式、開 intents、邀請和執行的步驟。
 
 ## 文件
 

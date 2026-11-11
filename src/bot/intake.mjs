@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { readThreadsInBrowser } from './browser.mjs'
 import { assertPublicUrl, safeFetchText } from './net-safe.mjs'
 import { linkKind } from './core.mjs'
 
@@ -225,13 +226,24 @@ export async function ytdlpInfo(url, { ytdlp = 'yt-dlp', transcriber = '', exec 
 
 /**
  * Reads one link. -> { url, kind, title, text, source, limits: [strings], ok }.
- * source: 'yt-dlp' | 'page' | 'og-meta'. limits: honest notes about what could not be read.
+ * source: 'yt-dlp' | 'page' | 'og-meta' | 'browser'. limits: honest notes about what could not be read.
  */
-export async function readLink(url, { env = process.env, fetchImpl = fetch, lookup, ytdlpExec } = {}) {
+export async function readLink(url, { env = process.env, fetchImpl = fetch, lookup, ytdlpExec, browserRead = readThreadsInBrowser } = {}) {
   const kind = linkKind(url)
   const limits = []
   await assertPublicUrl(url, lookup) // refuse early, before any external tool sees it
   const out = { url, kind, title: '', text: '', source: 'page', limits, ok: false }
+
+  if (kind === 'threads') {
+    // A logged-out browser sees the post and its replies; the preview tags below are the fallback.
+    const b = await browserRead(url, { env, fetchImpl, lookup })
+    if (b.ok) {
+      Object.assign(out, { title: b.title, text: b.text, source: 'browser', ok: true })
+      limits.push('read in a logged-out browser: the post and the replies shown without an account; images and video were not read')
+      return finish(out)
+    }
+    limits.push(`browser: ${b.why}`)
+  }
 
   if (kind === 'youtube' || kind === 'instagram') {
     const ytdlp = env.BOT_YTDLP === 'off' ? '' : env.BOT_YTDLP || 'yt-dlp'
