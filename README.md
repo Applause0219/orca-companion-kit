@@ -106,6 +106,12 @@ agent 會先問你幾件事：參考圖、配色、角色個性、招牌動作�
 
 系統開了「減少動態效果」時，寵物和所有 touch 都不會啟動；在 Orca 開著的時候切換這個設定，牠會當場收起來，關掉後再回來。
 
+## Discord 機器人：丟連結給它讀
+
+選配、和 Orca 外觀無關，可以單獨跑（`npm run bot`，不需要開 Orca）。一個只跟你私訊的 Discord 機器人：貼 Instagram Reels、Threads、YouTube 或一般網頁的連結，它用你自己的 `claude -p` 讀內容、摘要，把裡面的工具和技巧記成筆記（`~/.orca/themer/bot/notes/`），可重複使用的做法存成 skill 草稿，**按下 Install 按鈕才會安裝**，不會自動寫進 `~/.claude/skills`。內容一律當不可信資料處理，不下載影片或音訊。
+
+Threads、Instagram 沒登入時只拿得到公開的預覽文字，影片內容讀不到；每個平台實際讀得到什麼、讀不到什麼，寫在 [docs/discord-bot.md](docs/discord-bot.md)，那裡也有建立應用程式、開 intents、邀請和執行的步驟。
+
 ## 文件
 
 | 文件 | 內容 |
@@ -134,6 +140,7 @@ npm run check          # 檢查 ~/.orca/themer 裡的主題和 touch（效能陷
 npm run check -- --repo
 npm run perf           # 開兩個隔離的 Orca 量 Puff 的效能預算（約 3 分鐘，見 docs/performance.md）
 npm run example        # 複製範例到 ~/.orca/themer
+npm run bot            # Discord 私人機器人（見 docs/discord-bot.md）
 npm run cursor -- my-cursor.svg 2 2   # SVG 轉成游標 CSS（1x/2x、熱點）
 npm run chime -- ~/.orca/themer/sounds/my-theme.wav 1046.5 1318.5
 ```
