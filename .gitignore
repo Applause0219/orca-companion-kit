@@ -4,3 +4,4 @@ backup/
 Orca Companion.vbs
 *.log
 .DS_Store
+.env
