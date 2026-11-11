@@ -63,6 +63,13 @@ export function parseMeta(html) {
 const SKIP_TAGS = new Set(['script', 'style', 'noscript', 'svg', 'template'])
 const BREAK_TAGS = new Set(['br', 'p', 'div', 'li', 'tr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
 
+/** True when the '<' at i opens a tag: a letter follows it, or a slash and then a letter. */
+function tagStartsAt(low, i) {
+  let c = low.charCodeAt(i + 1)
+  if (c === 47) c = low.charCodeAt(i + 2)
+  return c >= 97 && c <= 122
+}
+
 /** Visible text of an HTML page (scripts, styles and tags removed). One linear pass with indexOf. */
 export function htmlToText(html) {
   const src = String(html).slice(0, MAX_HTML)
@@ -83,11 +90,24 @@ export function htmlToText(html) {
       pos = e + 3
       continue
     }
+    // A '<' that does not start a tag name (a letter, or a slash and a letter) is literal text: "1 < 2".
+    if (!tagStartsAt(low, lt)) {
+      let j = lt + 1
+      while (src.charCodeAt(j) === 60 && !tagStartsAt(low, j)) j++ // a run of stray '<' in one step
+      out += src.slice(lt, j)
+      pos = j
+      continue
+    }
+    const closing = low.charCodeAt(lt + 1) === 47
+    const nameStart = lt + (closing ? 2 : 1)
     // The next '>' is searched for once: while it is still ahead of this '<' it is reused, so a run of '<'
     // with no '>' (or one far away) cannot make the scan quadratic.
     if (gtAt < lt) gtAt = src.indexOf('>', lt)
     const gt = gtAt
-    if (gt < 0) break
+    if (gt < 0) {
+      out += src.slice(lt) // no '>' anywhere after this point: the rest is text
+      break
+    }
     if (gt - lt > MAX_TAG) {
       // Too long to be a tag: its '<' is plain text. Every '<' before gt - MAX_TAG is in the same situation,
       // so they are all passed over in one step instead of one loop turn each.
@@ -96,10 +116,7 @@ export function htmlToText(html) {
       pos = limit
       continue
     }
-    let k = lt + 1
-    const closing = low.charCodeAt(k) === 47
-    if (closing) k++
-    const nameStart = k
+    let k = nameStart
     while (k < gt && k - nameStart < 12) {
       const c = low.charCodeAt(k)
       if ((c >= 97 && c <= 122) || (c >= 48 && c <= 57)) k++
@@ -107,10 +124,6 @@ export function htmlToText(html) {
     }
     const name = low.slice(nameStart, k)
     pos = gt + 1
-    if (!name || !(low.charCodeAt(nameStart) >= 97 && low.charCodeAt(nameStart) <= 122)) {
-      out += ' '
-      continue
-    }
     if (!closing && SKIP_TAGS.has(name)) {
       const close = low.indexOf('</' + name, pos)
       if (close < 0) break
@@ -242,7 +255,8 @@ export async function readLink(url, { env = process.env, fetchImpl = fetch, look
   if (page.status >= 400) limits.push(`the site answered HTTP ${page.status}`)
   const meta = parseMeta(page.text)
   if (kind === 'web' || kind === 'youtube') {
-    const body = htmlToText(page.text)
+    // Plain text is passed through untouched: it has no markup, and "a < b" must stay as written.
+    const body = /^text\/plain/i.test(page.contentType) ? page.text.slice(0, MAX_HTML).trim() : htmlToText(page.text)
     Object.assign(out, { title: meta.title, text: body || meta.description, source: 'page', ok: !!(body || meta.description) })
     if (page.truncated) limits.push('the page was cut at the size limit')
     if (!body && !meta.description) limits.push('the page has no readable text (it may need JavaScript or a login)')

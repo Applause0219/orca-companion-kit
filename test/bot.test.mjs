@@ -132,6 +132,28 @@ test('readLink: Threads uses the ordinary browser identity by default; the crawl
   assert.match(ua, /Mozilla/, 'the opt-in applies to Threads and Instagram only')
 })
 
+test('htmlToText: a stray < is literal text and never swallows what follows', () => {
+  const y = 'y'.repeat(100)
+  const a = htmlToText('a < b ' + y + '<script>SECRET4()</script>')
+  assert.equal(a, 'a < b ' + y)
+  assert.equal(htmlToText('raw 1 < 2.</p>').replace(/\s+/g, ' '), 'raw 1 < 2.')
+  assert.ok(htmlToText('x <3 you <b>bold</b>').includes('<3 you'))
+  assert.ok(htmlToText('1 << 2 and 3 </ 4 <i>z</i>').startsWith('1 << 2 and 3 </ 4'))
+  // No '>' anywhere later: the rest is still text, not dropped.
+  assert.equal(htmlToText('a < b and more text'), 'a < b and more text')
+  assert.ok(htmlToText('<p>hi</p> 1 < 2 and no end').endsWith('1 < 2 and no end'))
+  assert.ok(!htmlToText('keep <script>SECRET5()</script> tail < x').includes('SECRET5'))
+})
+
+test('readLink: a text/plain response is used as is, not run through the HTML parser', async () => {
+  const body = 'if a < b then <tag-like text> stays\nline two'
+  const fetchImpl = async () => new Response(body, { status: 200, headers: { 'content-type': 'text/plain; charset=utf-8' } })
+  const r = await readLink('https://example.com/notes.txt', { env: {}, fetchImpl, lookup: publicLookup })
+  assert.equal(r.text, body)
+  const h = await readLink('https://example.com/page', { env: {}, lookup: publicLookup, fetchImpl: async () => new Response('<p>a</p><script>x()</script>', { status: 200, headers: { 'content-type': 'text/html' } }) })
+  assert.equal(h.text, 'a')
+})
+
 test('readLink: a host that resolves to a private address is refused before yt-dlp or fetch see it', async () => {
   let ran = 0
   let fetched = 0
