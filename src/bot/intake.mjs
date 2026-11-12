@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { readThreadsInBrowser } from './browser.mjs'
+import { browserLimits, readPostInBrowser } from './browser.mjs'
 import { assertPublicUrl, safeFetchText } from './net-safe.mjs'
 import { linkKind } from './core.mjs'
 
@@ -228,18 +228,19 @@ export async function ytdlpInfo(url, { ytdlp = 'yt-dlp', transcriber = '', exec 
  * Reads one link. -> { url, kind, title, text, source, limits: [strings], ok }.
  * source: 'yt-dlp' | 'page' | 'og-meta' | 'browser'. limits: honest notes about what could not be read.
  */
-export async function readLink(url, { env = process.env, fetchImpl = fetch, lookup, ytdlpExec, browserRead = readThreadsInBrowser } = {}) {
+export async function readLink(url, { env = process.env, fetchImpl = fetch, lookup, ytdlpExec, browserRead = readPostInBrowser } = {}) {
   const kind = linkKind(url)
   const limits = []
   await assertPublicUrl(url, lookup) // refuse early, before any external tool sees it
   const out = { url, kind, title: '', text: '', source: 'page', limits, ok: false }
 
-  if (kind === 'threads') {
-    // A logged-out browser sees the post and its replies; the preview tags below are the fallback.
+  if (kind === 'threads' || kind === 'instagram') {
+    // A logged-out browser sees the post (or caption) and its replies, image posts included; yt-dlp (Instagram)
+    // and the preview tags below are the fallbacks.
     const b = await browserRead(url, { env, fetchImpl, lookup })
     if (b.ok) {
       Object.assign(out, { title: b.title, text: b.text, source: 'browser', ok: true })
-      limits.push('read in a logged-out browser: the post and the replies shown without an account; images and video were not read')
+      limits.push(browserLimits(kind))
       return finish(out)
     }
     limits.push(`browser: ${b.why}`)
