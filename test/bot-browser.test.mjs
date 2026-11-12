@@ -252,27 +252,27 @@ test('live: a public Threads post is read in logged-out Chrome with the guard on
 })
 
 // ---------- Instagram: same guard, its own hosts ----------
-const IG = 'https://www.instagram.com/p/DfjebRHHSv3/'
+const IG = 'https://www.instagram.com/p/AbCdEf12345/'
 const IG_SHARE = 'https://www.instagram.com/share/p/BAbc123xyz'
 
 test('instagram targets: posts, reels and account-prefixed links; share links are a start only; sections are not accounts', () => {
-  for (const u of [IG, `${IG}?img_index=5&rpxt=TRACK`, 'https://instagram.com/reel/DewedhKHZwS/', 'https://www.instagram.com/reels/DewedhKHZwS', 'https://www.instagram.com/tv/AbCdE12', 'https://www.instagram.com/jasonxtsai/p/DfjebRHHSv3/'])
+  for (const u of [IG, `${IG}?img_index=5&rpxt=TRACK`, 'https://instagram.com/reel/ReEl123xyz/', 'https://www.instagram.com/reels/ReEl123xyz', 'https://www.instagram.com/tv/AbCdE12', 'https://www.instagram.com/someone_ig/p/AbCdEf12345/'])
     assert.ok(isPost(u, 'instagram'), u)
   for (const u of [IG_SHARE, 'https://www.instagram.com/share/reel/BAbc123xyz', 'https://www.instagram.com/share/BAbc123xyz']) {
     assert.ok(isTarget(u, 'instagram'), u)
     assert.equal(isPost(u, 'instagram'), false, `${u} is resolved before the browser opens anything`)
   }
   for (const u of [
-    'http://www.instagram.com/p/DfjebRHHSv3/', // not https
-    'https://www.instagram.com/jasonxtsai/', // a profile
+    'http://www.instagram.com/p/AbCdEf12345/', // not https
+    'https://www.instagram.com/someone_ig/', // a profile
     'https://www.instagram.com/direct/p/abcdef', // a messages path that looks like account + post
     'https://www.instagram.com/accounts/p/abcdef',
     'https://www.instagram.com/explore/p/abcdef',
     'https://www.instagram.com/stories/someone/123456/',
-    'https://www.instagram.com/accounts/login/?next=/p/DfjebRHHSv3/',
-    'https://scontent.cdninstagram.com/p/DfjebRHHSv3/',
-    'https://instagram.com.evil.example/p/DfjebRHHSv3/',
-    'https://www.instagram.com@evil.example/p/DfjebRHHSv3/'
+    'https://www.instagram.com/accounts/login/?next=/p/AbCdEf12345/',
+    'https://scontent.cdninstagram.com/p/AbCdEf12345/',
+    'https://instagram.com.evil.example/p/AbCdEf12345/',
+    'https://www.instagram.com@evil.example/p/AbCdEf12345/'
   ])
     assert.equal(isTarget(u, 'instagram'), false, u)
   assert.equal(isTarget(IG, 'threads'), false, 'a site never accepts the other site’s links')
@@ -290,7 +290,7 @@ test('instagram guard: GET only, instagram.com and its script CDN only, never th
     ['POST', 'https://www.instagram.com/ajax/bulk-route-definitions/', 'xhr'],
     ['GET', 'https://www.facebook.com/x', 'xhr'],
     ['GET', 'https://scontent.cdninstagram.com/a.jpg', 'image'],
-    ['GET', 'https://instagram.ftpe15-1.fna.fbcdn.net/a.jpg', 'image']
+    ['GET', 'https://instagram.xyz1-1.fna.fbcdn.net/a.jpg', 'image']
   ])
     assert.equal(g({ method, url, resourceType: type }), 'abort', `${method} ${url}`)
   assert.equal(g({ url: 'https://www.threads.com/api/graphql', resourceType: 'xhr' }), 'abort', 'an Instagram read never reaches Threads')
@@ -303,8 +303,8 @@ test('instagram guard: GET only, instagram.com and its script CDN only, never th
 })
 
 test('instagram text: the sign-up banner and the like/reply buttons are dropped; caption and comments stay', () => {
-  const raw = '絕不錯過jasonxtsai的任何貼文\n註冊 Instagram，隨時掌握最新消息。\n繼續操作即表示你同意 Instagram 的《使用條款》和《隱私政策》。\n註冊\n登入\njasonxtsai\n•\n追蹤\njasonxtsai\n \n1 天\n電腦卡到開個瀏覽器都要等。\n\n留言「檢查」。\namyflower_hk\n \n8分鐘\n檢查\n讚\n回覆'
-  assert.equal(cleanPostText(raw, 'instagram'), 'jasonxtsai\njasonxtsai\n\n1 天\n電腦卡到開個瀏覽器都要等。\n\n留言「檢查」。\namyflower_hk\n\n8分鐘\n檢查')
+  const raw = '絕不錯過someone_ig的任何貼文\n註冊 Instagram，隨時掌握最新消息。\n繼續操作即表示你同意 Instagram 的《使用條款》和《隱私政策》。\n註冊\n登入\nsomeone_ig\n•\n追蹤\nsomeone_ig\n \n1 天\n貼文說明文字。\n\n留言「好」拿連結。\ncommenter_a\n \n8分鐘\n好\n讚\n回覆'
+  assert.equal(cleanPostText(raw, 'instagram'), 'someone_ig\nsomeone_ig\n\n1 天\n貼文說明文字。\n\n留言「好」拿連結。\ncommenter_a\n\n8分鐘\n好')
   assert.equal(cleanPostText('讚\n回覆', 'threads'), '讚\n回覆', 'Threads text is left as it was')
   assert.equal(cleanPostText('a\n \nb', 'instagram'), 'a\n\nb', 'a line of only a no-break space is blank')
 })
@@ -330,26 +330,26 @@ test('instagram browser read: opens the resolved post with the Instagram guard i
   assert.equal(await through(f, { url: IG, type: 'document', nav: true }), 'continue')
   assert.ok(f.state.closed)
 
-  const login = fakePlaywright({ finalUrl: 'https://www.instagram.com/accounts/login/?next=%2Fp%2FDfjebRHHSv3%2F' })
+  const login = fakePlaywright({ finalUrl: 'https://www.instagram.com/accounts/login/?next=%2Fp%2FAbCdEf12345%2F' })
   const b = await readPostInBrowser(IG, opts(login))
   assert.equal(b.ok, false)
   assert.match(b.why, /redirected elsewhere/)
 })
 
 test('readLink: an Instagram image post is read in the browser first; yt-dlp is not run', async () => {
-  const f = fakePlaywright({ finalUrl: IG, text: 'jasonxtsai\n電腦卡到開個瀏覽器都要等。' })
+  const f = fakePlaywright({ finalUrl: IG, text: 'someone_ig\n貼文說明文字。' })
   let ytdlp = 0
   const r = await readLink(`${IG}?img_index=5`, { env: {}, lookup: publicLookup, fetchImpl: async () => assert.fail('no page fetch'), ytdlpExec: async () => (ytdlp++, { stdout: '' }), browserRead: (u, o) => readPostInBrowser(u, { ...o, load: f.load, gapMs: 0 }) })
   assert.equal(r.source, 'browser')
   assert.equal(r.ok, true)
-  assert.match(r.text, /電腦卡到/)
+  assert.match(r.text, /貼文說明/)
   assert.match(r.limits.join(' '), /caption and the comments.*images and video were not read/)
   assert.equal(ytdlp, 0)
 })
 
 test('readLink: when the browser cannot read an Instagram link, yt-dlp is tried next and the reason is kept', async () => {
-  const ytdlpExec = async () => ({ stdout: JSON.stringify({ title: 'Reel title', description: 'caption text', uploader: 'harryleeai' }) })
-  const r = await readLink('https://www.instagram.com/reel/DewedhKHZwS/', { env: { BOT_YTDLP: 'yt-dlp' }, lookup: publicLookup, ytdlpExec, browserRead: async () => ({ ok: false, why: 'browser reading is off (BOT_BROWSER=off)' }) })
+  const ytdlpExec = async () => ({ stdout: JSON.stringify({ title: 'Reel title', description: 'caption text', uploader: 'someone_ig' }) })
+  const r = await readLink('https://www.instagram.com/reel/ReEl123xyz/', { env: { BOT_YTDLP: 'yt-dlp' }, lookup: publicLookup, ytdlpExec, browserRead: async () => ({ ok: false, why: 'browser reading is off (BOT_BROWSER=off)' }) })
   assert.equal(r.source, 'yt-dlp')
   assert.match(r.text, /caption text/)
   assert.match(r.limits[0], /^browser: browser reading is off/)
