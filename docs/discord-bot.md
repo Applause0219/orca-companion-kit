@@ -33,7 +33,7 @@ DISCORD_OWNER_ID=你的數字 ID
 | `BOT_HISTORY_TURNS` | 聊天記住最近幾輪，預設 10 |
 | `BOT_YTDLP` | `yt-dlp` 的路徑；寫 `off` 就完全不用 |
 | `BOT_TRANSCRIBER` | 選用：你自己的本機轉錄程式（例如包好的 whisper 指令），預設關閉，見下 |
-| `BOT_BROWSER` | Threads 連結用哪個瀏覽器讀（見 §5）。預設用你裝好的 Google Chrome；寫 `off` 就不用瀏覽器；寫路徑就用那個 Chromium 執行檔 |
+| `BOT_BROWSER` | Threads 和 Instagram 連結用哪個瀏覽器讀（見 §5）。預設用你裝好的 Google Chrome；寫 `off` 就不用瀏覽器；寫路徑就用那個 Chromium 執行檔 |
 | `BOT_SOCIAL_UA` | 預設不設，Threads／Instagram 用一般瀏覽器身分。寫 `crawler` 改用「連結預覽爬蟲」身分（見 §5，有條款風險）；寫其他字串就原樣當作 User-Agent |
 | `BOT_CLAUDE` | 換掉 `claude` 指令（測試用） |
 
@@ -69,8 +69,8 @@ skill-drafts/<名稱>/SKILL.md   草稿，按了 Install 才會被複製出去
 | --- | --- | --- |
 | 一般網頁 | 可見文字（上限約 1.5 MB、24,000 字） | 需要 JavaScript 才出現的內容、要登入的頁面 |
 | YouTube | `yt-dlp` 抓標題、說明、字幕（含自動字幕）。實測可用 | 沒有字幕的影片只有標題和說明，不會知道影片在講什麼（除非你設了 `BOT_TRANSCRIBER`） |
-| Threads 貼文 | 用**沒登入的 Chrome**開（見下方「Threads 用瀏覽器讀」），讀到**貼文全文和沒登入也看得到的留言**；`/share/` 短連結也可以。實測：一則公開貼文約 3–4 秒讀完。瀏覽器不能用時（沒裝 Chrome、`BOT_BROWSER=off`、沒裝 `playwright-core`），退回只讀預覽標籤：一般身分只拿到空殼，`BOT_SOCIAL_UA=crawler` 才有可能被截短的預覽文字 | 私人帳號、已刪除貼文、圖片裡的字、影片內容；要登入才展開的更多留言 |
-| Instagram Reels | 先試 `yt-dlp`；沒帶登入時，Instagram 常回「empty media response」。失敗後退回 `og:` 標籤，能拿到的通常只有 caption 的預覽 | **影片內容本身（口說、畫面）讀不到。** 需要登入的貼文只能拿到有限的預覽。此版沒有實測到一個真實的公開 Reel（只測了不存在的 ID 和個人檔案頁），所以 Reels 的實際成功率未知 |
+| Threads 貼文 | 用**沒登入的 Chrome**開（見下方「Threads 和 Instagram 用瀏覽器讀」），讀到**貼文全文和沒登入也看得到的留言**；`/share/` 短連結也可以。實測：一則公開貼文約 3–4 秒讀完。瀏覽器不能用時（沒裝 Chrome、`BOT_BROWSER=off`、沒裝 `playwright-core`），退回只讀預覽標籤：一般身分只拿到空殼，`BOT_SOCIAL_UA=crawler` 才有可能被截短的預覽文字 | 私人帳號、已刪除貼文、圖片裡的字、影片內容；要登入才展開的更多留言 |
+| Instagram 貼文與 Reels | 和 Threads 一樣用**沒登入的 Chrome**開，讀到**說明文字（caption）全文和沒登入也看得到的留言**；圖片輪播貼文（`/p/`）、Reel（`/reel/`）、帶帳號名的網址（`/帳號/p/ID`）、`/share/` 連結都可以。實測（2026-11-12）：一則圖片貼文約 2.5 秒、Reel 也讀得到。瀏覽器不能用時才退回 `yt-dlp`（只認影片，圖片貼文一定失敗；沒登入時常回「empty media response」），最後退回 `og:` 標籤（實測常只拿到「Instagram」四個字） | **影片內容本身（口說、畫面）、圖片裡的字讀不到。** 私人帳號、已刪除貼文、要登入才展開的更多留言 |
 
 當一個連結被登入牆擋住，回覆裡會直接寫出來，並且把讀得到的部分照樣存成筆記，信心說明會標示只有預覽。
 
@@ -78,13 +78,14 @@ skill-drafts/<名稱>/SKILL.md   草稿，按了 Install 才會被複製出去
 
 要讀登入後才看得到的內容，需要你自己提供 cookies 給 `yt-dlp`；這個版本沒有做，因為把登入憑證交給機器人風險不小。
 
-### Threads 用瀏覽器讀
+### Threads 和 Instagram 用瀏覽器讀
 
-Threads 的網頁要等 JavaScript 跑完，貼文才會出現，所以只抓 HTML 只會拿到空殼。機器人改用 `playwright-core`（微軟維護的瀏覽器自動化套件，Apache-2.0，`optionalDependencies` 鎖在 1.64.1）在背景開你裝好的 Chrome，**不登入**、讀完就關：
+Threads 的網頁要等 JavaScript 跑完，貼文才會出現，所以只抓 HTML 只會拿到空殼。Instagram 的圖片貼文 `yt-dlp` 讀不了、預覽標籤又常是空的。兩個網站都改用 `playwright-core`（微軟維護的瀏覽器自動化套件，Apache-2.0，`optionalDependencies` 鎖在 1.64.1）在背景開你裝好的 Chrome，**不登入**、讀完就關：
 
 - **不用帳號、不存 cookie**：每次都是全新的瀏覽器環境，讀完整個丟掉，沒有登入狀態可以外洩。
-- **只讀不寫，由程式碼把關**：程式只會「開你給的貼文、讀文字」，裡面沒有點擊、輸入、送出。瀏覽器發出的每個請求都會檢查：只允許 GET（讀取）、只允許 https、只連 `threads.com`／`threads.net` 和放腳本的 `static.cdninstagram.com`；私訊、帳號、設定、通知、追蹤這些路徑（`/direct`、`/accounts`、`/settings`、`/api/v1/direct_v2` 等）就算是 GET 也擋；圖片、影片、字型、WebSocket、Service Worker、下載、彈出視窗、非代理的 WebRTC 一律擋掉。按讚、留言、送私訊都需要 GET 以外的請求，所以送不出去。
-- **`/share/` 短連結先在程式裡解析**：一跳一跳跟著轉址，每一跳都必須還在 Threads、而且不是私有位址，瀏覽器直接開最後的貼文網址。
+- **只讀不寫，由程式碼把關**：程式只會「開你給的貼文、讀文字」，裡面沒有點擊、輸入、送出。瀏覽器發出的每個請求都會檢查：只允許 GET（讀取）、只允許 https；讀 Threads 時只連 `threads.com`／`threads.net`，讀 Instagram 時只連 `instagram.com`，兩邊都另外只多放行放腳本的 `static.cdninstagram.com`（讀 Threads 碰不到 instagram.com，反過來也一樣）；私訊、帳號、設定、通知、追蹤、驗證這些路徑（`/direct`、`/accounts`、`/settings`、`/challenge`、`/api/v1/direct_v2` 等）就算是 GET 也擋；圖片、影片、字型、WebSocket、Service Worker、下載、彈出視窗、非代理的 WebRTC 一律擋掉。按讚、留言、送私訊都需要 GET 以外的請求，所以送不出去。
+- **`/share/` 短連結先在程式裡解析**：一跳一跳跟著轉址，每一跳都必須還在同一個網站（Threads 的不能跳到 Instagram，反之亦然）、而且不是私有位址，瀏覽器直接開最後的貼文網址。
+- **Instagram 實測（2026-11-12）**：沒登入的頁面會送出 `POST /api/graphql`、`/ajax/*`，也會向 `www.facebook.com` 和圖片 CDN 要資料；這些全部擋掉之後，說明文字和留言照樣出現，因為它們直接寫在網頁裡。讀到的文字會去掉「註冊／登入」橫幅和每則留言下的「讚／回覆」按鈕字。
 - **轉址的限制（照實說）**：Playwright 不會攔截轉址的中間那一跳，所以如果貼文網址本身被伺服器轉址（例如轉到登入頁），那一次 GET 擋不下來。程式一偵測到轉址就判定失敗、不採用內容，轉過去的頁面發出的其他請求仍然受上面的規則限制。
 - **真正讓私訊讀不到的是「沒有登入」**：這個瀏覽器裡沒有任何帳號。路徑黑名單是第二層防護，不是唯一保證；之後如果有人想加登入，這一段要重新評估。
 - **一次只讀一則**：同一時間只會開一個瀏覽器，兩次讀取至少間隔 5 秒。
@@ -110,7 +111,7 @@ Threads 的網頁要等 JavaScript 跑完，貼文才會出現，所以只抓 HT
 - 草稿**絕不自動安裝**。內容可能含提示注入，所以要你看過全文、按下 Install，才複製進去。每份草稿有自己的編號資料夾（名稱加隨機碼，不會覆蓋別份），按鈕帶著「訊息上那份文字的雜湊」；安裝時檔案必須和那份文字完全一致，裝完或按 Discard 後草稿就刪除，所以同一顆按鈕按第二次、或 Discard 之後再按 Install，都不會裝任何東西。
 - 網址檢查：只允許 http／https；會解析主機名稱，私有、loopback、link-local、CGNAT 位址一律拒絕；轉址的每一跳都重新檢查。限制：檢查時解析一次、`fetch` 連線時再解析一次，DNS rebinding 的空隙無法完全消除；不要把這個機器人放在內網有敏感服務的機器上當成唯一防線。
 - 所有外部程式（`claude`、`yt-dlp`、轉錄程式）都用參數陣列啟動，不經過 shell；網址放在 `--` 後面。
-- Threads 的瀏覽器：私有位址檢查先做完才啟動瀏覽器；`/share/` 轉址逐跳檢查；瀏覽器內每個請求另外過白名單（只有 GET、只有 Threads 和它的腳本網域、不碰私訊與帳號路徑），沒有任何 AI 操控這個瀏覽器，也沒有登入。轉址中間那一跳擋不下來，限制寫在 §5「Threads 用瀏覽器讀」。
+- Threads 和 Instagram 的瀏覽器：私有位址檢查先做完才啟動瀏覽器；`/share/` 轉址逐跳檢查；瀏覽器內每個請求另外過該網站自己的白名單（只有 GET、只有那個網站和它的腳本網域、不碰私訊與帳號路徑），沒有任何 AI 操控這個瀏覽器，也沒有登入。轉址中間那一跳擋不下來，限制寫在 §5「Threads 和 Instagram 用瀏覽器讀」。
 - token 只讀不寫：不會進 log（輸出前會遮蔽），不要把 `.env` 提交出去。
 
 ## 7. 限制
