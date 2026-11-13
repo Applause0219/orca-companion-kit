@@ -15,6 +15,22 @@ export const EXTRACT_SYSTEM = [
   'Reply with ONE JSON object only, no prose, no code fence.'
 ].join(' ')
 
+/**
+ * The system prompt, plus a fixed output language when BOT_NOTES_LANGUAGE is set (empty: the model picks,
+ * usually the content's language). The language comes from the owner's own config, never from the content,
+ * and it goes into the system prompt, outside the untrusted block. Cut to one short line.
+ */
+export function extractSystem(language = '') {
+  const lang = String(language ?? '').replace(/\s+/g, ' ').trim().slice(0, 60)
+  if (!lang) return EXTRACT_SYSTEM
+  return [
+    EXTRACT_SYSTEM,
+    `Write every text value (title, summary, tool purposes, techniques, confidence, skill description and body) in ${lang},`,
+    'whatever language the content is in. Keep tool names, links, code and commands as they are.',
+    'The skill name stays kebab-case in ASCII letters and digits.'
+  ].join(' ')
+}
+
 const SCHEMA = `{
   "title": "short title",
   "summary": "3-6 sentences",
@@ -69,7 +85,7 @@ export function parseExtraction(raw) {
 /** Full pipeline for one read link. */
 export async function extract(item, { model = '', env = process.env, call = callClaude } = {}) {
   if (!item.text?.trim() && !item.title) return { ok: false, title: '', summary: '', tools: [], techniques: [], skill: null, confidence: 'low: nothing was readable' }
-  const r = await call({ prompt: buildExtractionPrompt(item), system: EXTRACT_SYSTEM, model, env })
+  const r = await call({ prompt: buildExtractionPrompt(item), system: extractSystem(env.BOT_NOTES_LANGUAGE), model, env })
   if (!r.ok) return { ok: false, title: '', summary: `(summary failed: ${r.error})`, tools: [], techniques: [], skill: null, confidence: 'low' }
   return parseExtraction(r.text)
 }

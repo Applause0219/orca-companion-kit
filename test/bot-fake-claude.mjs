@@ -4,7 +4,7 @@ let input = ''
 process.stdin.on('data', (d) => (input += d))
 process.stdin.on('end', () => {
   if (process.env.BOT_FAKE_LOG) {
-    import('node:fs').then((fs) => fs.appendFileSync(process.env.BOT_FAKE_LOG, JSON.stringify({ args: process.argv.slice(2), input }) + '\n'))
+    import('node:fs').then((fs) => fs.appendFileSync(process.env.BOT_FAKE_LOG, JSON.stringify({ args: process.argv.slice(2), input, discordKeys: Object.keys(process.env).filter((k) => /^DISCORD_/i.test(k)), notesLanguage: process.env.BOT_NOTES_LANGUAGE ?? null }) + '\n'))
   }
   if (input.includes('BEGIN UNTRUSTED CONTENT')) {
     const draft = /MAKE-A-SKILL/.test(input)

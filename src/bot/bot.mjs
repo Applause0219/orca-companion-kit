@@ -26,6 +26,18 @@ export function readEnvFiles(env = process.env) {
 }
 
 /**
+ * The environment the bot runs with: the real one, plus the optional BOT_* settings from the .env files
+ * (a real environment variable wins). This env is handed to every `claude` child process, so every DISCORD_*
+ * variable is left out, wherever it came from: the token and owner id only ever go to the gateway (botConfig).
+ */
+export function botEnv(fileEnv = {}, env = process.env) {
+  const out = {}
+  for (const [k, v] of Object.entries(env)) if (!/^DISCORD_/i.test(k)) out[k] = v
+  for (const [k, v] of Object.entries(fileEnv)) if (/^BOT_[A-Z0-9_]+$/.test(k) && out[k] === undefined) out[k] = v
+  return out
+}
+
+/**
  * The bot's behaviour, separate from the transport so tests drive it directly.
  * @param {{ env?: object, root?: string, read?: Function, call?: Function }} o
  */
@@ -99,25 +111,37 @@ export function createBot({ env = process.env, root = userRoot(env), read = read
 }
 
 // ---------- run ----------
-export function main(env = process.env) {
-  const fakeDir = env.BOT_DISCORD_FAKE || ''
-  const cfg = botConfig(readEnvFiles(env), env)
+/**
+ * Reads the config (.env files + real env) and starts the gateway -> { code, stop, root }. `code` 1 means it
+ * did not start. Tests call this with BOT_DISCORD_FAKE; main() adds the signal handling.
+ */
+export function startBot(env = process.env, { log = (m) => console.log(`[bot] ${m}`) } = {}) {
+  const fileEnv = readEnvFiles(env)
+  const cfg = botConfig(fileEnv, env) // the only place the token and owner id are read
+  const runEnv = botEnv(fileEnv, env) // what the bot and its claude calls see: no DISCORD_* in it
+  const fakeDir = runEnv.BOT_DISCORD_FAKE || ''
   if (!cfg.ok && !fakeDir) {
     console.error(SETUP_HELP)
     if (cfg.why !== 'none') console.error(`(problem: ${cfg.why === 'no-token' ? 'DISCORD_BOT_TOKEN is missing' : 'DISCORD_OWNER_ID is missing or not a numeric id'})`)
-    return 1
+    return { code: 1, stop: () => {} }
   }
-  const root = userRoot(env)
-  const bot = createBot({ env, root })
-  const gw = createGateway({ cfg: fakeDir ? { token: cfg.token || 'fake', ownerId: cfg.ownerId || env.DISCORD_OWNER_ID || '100000000000000009' } : cfg, root, log: (m) => console.log(`[bot] ${m}`), fakeDir, ...bot })
-  if (!gw.start()) return 1
+  const root = userRoot(runEnv)
+  const bot = createBot({ env: runEnv, root })
+  const gw = createGateway({ cfg: fakeDir ? { token: cfg.token || 'fake', ownerId: cfg.ownerId || '100000000000000009' } : cfg, root, log, fakeDir, ...bot })
+  if (!gw.start()) return { code: 1, stop: () => {} }
+  return { code: 0, stop: () => gw.stop(), root }
+}
+
+export function main(env = process.env) {
+  const r = startBot(env)
+  if (r.code) return r.code
   const stop = () => {
-    gw.stop()
+    r.stop()
     process.exit(0)
   }
   process.on('SIGINT', stop)
   process.on('SIGTERM', stop)
-  console.log(`[bot] running; notes go to ${path.join(root, 'bot', 'notes')}. Ctrl+C to stop.`)
+  console.log(`[bot] running; notes go to ${path.join(r.root, 'bot', 'notes')}. Ctrl+C to stop.`)
   return 0
 }
 

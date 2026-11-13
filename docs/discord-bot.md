@@ -24,7 +24,7 @@ DISCORD_OWNER_ID=你的數字 ID
 
 缺任何一個，`npm run bot` 會直接印出設定說明並結束。同一個設定也可以用環境變數給（環境變數優先）。
 
-選用設定（都寫在同一個 `.env`）：
+選用設定（都寫在同一個 `.env`，也可以用環境變數給，環境變數優先）。`.env` 裡只有 `BOT_` 開頭的設定會交給 bot。token 和使用者 ID 只用來連 Discord：所有 `DISCORD_` 開頭的變數，不管寫在 `.env` 還是環境變數，都不會傳給 `claude` 子程序：
 
 | 變數 | 作用 |
 | --- | --- |
@@ -35,9 +35,10 @@ DISCORD_OWNER_ID=你的數字 ID
 | `BOT_TRANSCRIBER` | 選用：你自己的本機轉錄程式（例如包好的 whisper 指令），預設關閉，見下 |
 | `BOT_BROWSER` | Threads 和 Instagram 連結用哪個瀏覽器讀（見 §5）。預設用你裝好的 Google Chrome；寫 `off` 就不用瀏覽器；寫路徑就用那個 Chromium 執行檔 |
 | `BOT_SOCIAL_UA` | 預設不設，Threads／Instagram 用一般瀏覽器身分。寫 `crawler` 改用「連結預覽爬蟲」身分（見 §5，有條款風險）；寫其他字串就原樣當作 User-Agent |
+| `BOT_NOTES_LANGUAGE` | 讀連結產生的筆記固定用哪種語言寫，不管原文是什麼語言，例如 `Traditional Chinese (Taiwan)`。工具名稱、連結、程式碼維持原樣。空白就由模型決定（通常跟原文同語言）。只管模型寫的筆記內容；`Tools`、`Confidence` 這些固定標籤、讀取限制說明，以及讀不到內容或摘要失敗時程式寫死的訊息（例如 `(summary failed: …)`）仍是英文 |
 | `BOT_CLAUDE` | 換掉 `claude` 指令（測試用） |
 
-人設放在 `~/.orca/themer/bot/persona.md`（純文字，當 system prompt）；沒有這個檔就用中性預設。
+人設放在 `~/.orca/themer/bot/persona.md`（純文字，當 system prompt）；沒有這個檔就用中性預設（用你寫的語言回）。聊天要固定用某種語言回，寫在這個檔裡，例如「Always reply in Traditional Chinese as used in Taiwan」；`BOT_NOTES_LANGUAGE` 只管筆記，不管聊天。
 
 ## 3. 執行
 
