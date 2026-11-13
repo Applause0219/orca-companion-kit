@@ -234,7 +234,7 @@ test('.env file -> bot -> extraction: BOT_NOTES_LANGUAGE in the user .env reache
   fs.mkdirSync(path.join(root, 'bot'), { recursive: true })
   fs.writeFileSync(path.join(root, 'bot', '.env'), `DISCORD_BOT_TOKEN=test-token-not-real\nBOT_NOTES_LANGUAGE=${ZH}\n`)
   const base = { ORCA_THEMER_ROOT: root }
-  const env = botEnv(readEnvFiles(base), base)
+  const env = botEnv(readEnvFiles(base, tmp()), base) // an empty folder stands in for the repo, so a real .env is never read
   const calls = []
   const call = async (o) => (calls.push(o), { ok: true, text: '{"title":"標題","summary":"中文摘要"}' })
   const read = async (url) => ({ url, kind: 'web', source: 'page', limits: [], title: 'T', text: 'English body' })
@@ -611,7 +611,7 @@ test('e2e startBot: settings in the user .env reach the running bot and its clau
     `BOT_NOTES_LANGUAGE=${ZH}`
   ].join('\n') + '\n')
   // Only the root comes from the real env, plus a token there too: both sources must stay out of claude.
-  const r = startBot({ PATH: process.env.PATH, ORCA_THEMER_ROOT: root, DISCORD_BOT_TOKEN: 'real-env-token-not-real' }, { log: () => {} })
+  const r = startBot({ PATH: process.env.PATH, ORCA_THEMER_ROOT: root, DISCORD_BOT_TOKEN: 'real-env-token-not-real' }, { log: () => {}, repo: tmp() }) // never the real repo .env
   try {
     assert.equal(r.code, 0)
     fs.writeFileSync(path.join(fake, 'in', '0001.json'), JSON.stringify({ id: '1', content: 'hello there', author: { id: OWNER } }))
