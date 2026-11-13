@@ -13,7 +13,8 @@ import { discardDraft, installDraft, listNotes, saveDraft, saveNote, searchNotes
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 
-export function readEnvFiles(env = process.env) {
+/** `repo` is the folder whose .env is read second; tests point it at an empty folder so a real .env is never used. */
+export function readEnvFiles(env = process.env, repo = REPO) {
   const read = (f) => {
     try {
       return parseEnv(fs.readFileSync(f, 'utf8'))
@@ -22,7 +23,7 @@ export function readEnvFiles(env = process.env) {
     }
   }
   // The user folder's .env, then the repo's, then real environment variables (which win).
-  return { ...read(path.join(botDir(env), '.env')), ...read(path.join(REPO, '.env')) }
+  return { ...read(path.join(botDir(env), '.env')), ...read(path.join(repo, '.env')) }
 }
 
 /**
@@ -115,8 +116,8 @@ export function createBot({ env = process.env, root = userRoot(env), read = read
  * Reads the config (.env files + real env) and starts the gateway -> { code, stop, root }. `code` 1 means it
  * did not start. Tests call this with BOT_DISCORD_FAKE; main() adds the signal handling.
  */
-export function startBot(env = process.env, { log = (m) => console.log(`[bot] ${m}`) } = {}) {
-  const fileEnv = readEnvFiles(env)
+export function startBot(env = process.env, { log = (m) => console.log(`[bot] ${m}`), repo = REPO } = {}) {
+  const fileEnv = readEnvFiles(env, repo)
   const cfg = botConfig(fileEnv, env) // the only place the token and owner id are read
   const runEnv = botEnv(fileEnv, env) // what the bot and its claude calls see: no DISCORD_* in it
   const fakeDir = runEnv.BOT_DISCORD_FAKE || ''
